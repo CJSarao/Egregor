@@ -41,7 +41,7 @@
 ## Task 5
 - desc: Add the WhisperKit-backed Transcriber with lazy model download, model storage, warmup, and progress reporting hooks
 - deps: Task 1
-- passes: false
+- passes: true
 - ac:
   - The transcriber stores the Core ML Whisper model under ~/.local/share/voiceshell/models/
   - First transcription triggers lazy download and compile when the model is missing, while later transcriptions reuse the cached model
