@@ -51,7 +51,7 @@
 ## Task 6
 - desc: Implement the audio pipeline using AVAudioEngine, 16kHz mono segment output, VAD segmentation, and forceEnd handling
 - deps: Task 1
-- passes: false
+- passes: true
 - ac:
   - AudioPipeline hides AVFoundation details and emits SpeechSegment values with normalized audio, duration, and silenceBefore metadata
   - In PTT mode, forceEnd terminates the active segment immediately on key release even if VAD would continue

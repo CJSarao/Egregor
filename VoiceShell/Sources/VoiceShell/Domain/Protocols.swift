@@ -1,9 +1,9 @@
 import Foundation
 
 protocol AudioPipeline {
-    func start()
-    func stop()
-    func forceEnd()
+    func start() async
+    func stop() async
+    func forceEnd() async
     var segments: AsyncStream<SpeechSegment> { get }
 }
 
