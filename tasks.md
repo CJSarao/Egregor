@@ -21,7 +21,7 @@
 ## Task 3
 - desc: Build OutputManager session discovery and pipe transport so append, clear, and send target the focused zsh session correctly
 - deps: Task 1, Task 2
-- passes: false
+- passes: true
 - ac:
   - OutputManager resolves the frontmost application, finds a registered shell session, and writes to its pipe without exposing process-tree or pipe details to callers
   - append writes inject messages that preserve space-separated buffer concatenation semantics across repeated calls
