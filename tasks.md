@@ -11,7 +11,7 @@
 ## Task 2
 - desc: Implement the shell integration installer and managed zsh snippet lifecycle for per-session pipe registration
 - deps: Task 1
-- passes: false
+- passes: true
 - ac:
   - First-launch flow can present the exact managed zsh integration block before writing to ~/.zshrc
   - Install appends the marked block idempotently and creates the session registry directory layout under ~/.config/voiceshell/
