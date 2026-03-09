@@ -33,3 +33,11 @@ enum VoiceCommand {
     case roger
     case abort
 }
+
+enum HUDState: Equatable {
+    case idle
+    case recording(mode: SessionController.OperatingMode)
+    case transcribing
+    case injected(String)
+    case cleared
+}

@@ -81,7 +81,7 @@
 ## Task 9
 - desc: Implement the floating HUD as a pure observer of session state with recording, transcribing, injected, cleared, and idle behaviors
 - deps: Task 5, Task 8
-- passes: false
+- passes: true
 - ac:
   - The HUD presents in a non-key, click-through floating window that never steals focus from the active terminal
   - Recording shows live partial text, transcribing shows activity, injected fades out, cleared dismisses immediately, and idle stays hidden
