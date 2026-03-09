@@ -31,7 +31,7 @@
 ## Task 4
 - desc: Implement IntentResolver with fixed command vocabulary, confidence floor, and OPEN-mode isolation timing rules
 - deps: Task 1
-- passes: false
+- passes: true
 - ac:
   - ROGER and ABORT resolve to commands only when the utterance satisfies the isolation algorithm and current input mode permits command handling
   - Non-vocabulary text never resolves to a command regardless of timing metadata
