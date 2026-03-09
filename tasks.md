@@ -71,7 +71,7 @@
 ## Task 8
 - desc: Build SessionController orchestration so transcribed segments map to injection, send, clear, or discard outcomes exactly as specified
 - deps: Task 3, Task 4, Task 5, Task 6, Task 7
-- passes: false
+- passes: true
 - ac:
   - PTT dictation events transcribe and append resolved text while discards become no-ops
   - PTT command events can only execute ROGER or ABORT outcomes and never inject text
