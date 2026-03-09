@@ -61,7 +61,7 @@
 ## Task 7
 - desc: Implement the hotkey manager for right-side modifier handling, persistent mode toggling, and resolved hotkey event streaming
 - deps: Task 1
-- passes: false
+- passes: true
 - ac:
   - Holding Right Option emits PTT begin and end events for dictation mode
   - Holding Right Shift with Right Option emits command-mode PTT events

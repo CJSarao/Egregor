@@ -12,13 +12,13 @@ struct TranscriptionResult {
     let segment: SpeechSegment
 }
 
-enum HotkeyEvent {
+enum HotkeyEvent: Equatable {
     case pttBegan
     case pttEnded(mode: InputMode)
     case modeToggled
 }
 
-enum InputMode {
+enum InputMode: Equatable {
     case dictation
     case command
 }
