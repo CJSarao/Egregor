@@ -1,0 +1,412 @@
+# VoiceShell — Project Specification
+
+*2026-03-09*
+#voice-control #terminal #swift #architecture #spec
+
+---
+
+## 1. What It Is
+
+A macOS menu bar application that transcribes voice input and injects text into the active terminal's shell buffer. Productivity tool for hands-free terminal interaction — not a voice assistant, not an agent, not a dictation replacement for prose.
+
+Primary use case: walking on a treadmill, interacting with Claude Code or any shell-based tool without touching the keyboard.
+
+---
+
+## 2. Software Design Principles
+
+Complexity is the enemy. Every design decision must reduce one of:
+- **Change amplification** — one change requires edits in many places
+- **Cognitive load** — too much context needed to make a change
+- **Unknown unknowns** — unclear what code or knowledge a change requires
+
+### Deep Modules
+Modules must have simple interfaces hiding significant complexity. A 40-line method with a clean interface beats five 8-line helpers that scatter one abstraction. Split only when it produces a deeper interface with better information hiding.
+
+### Information Hiding
+Each module encapsulates design decisions. Callers must not know internals. If two modules share knowledge of the same design decision, merge them or extract the shared knowledge.
+
+### General-Purpose Interfaces, Specific Implementations
+Interfaces must serve multiple callers without modification. Push specialized logic up (to callers/UI) or down (into drivers/adapters), never into core abstractions.
+
+### Different Layer = Different Abstraction
+Adjacent layers with similar abstractions should be merged or one must add meaningful transformation.
+
+### Pull Complexity Downward
+When complexity is unavoidable, push it into the implementation, not the interface.
+
+### Design It Twice
+For any significant abstraction, consider at least two approaches before committing. Compare interfaces, not implementations.
+
+---
+
+## 3. Non-Goals (Explicit)
+
+- Ghostty SDK or any terminal-emulator-specific API
+- Clipboard injection (deferred — shell integration first)
+- Python prototype or intermediate language step
+- Direct pipe architecture (voice → agent without buffer)
+- Runtime configuration of VAD/isolation parameters by user
+- Cross-platform support (macOS only, personal tool)
+- SSH session support
+- Prose dictation / document editing use case
+
+---
+
+## 4. Technology Stack
+
+| Component | Technology | Notes |
+|---|---|---|
+| Language | Swift | No intermediate prototype |
+| Minimum macOS | 14.0 (Sonoma) | Personal tool, newest hardware |
+| UI | SwiftUI `MenuBarExtra` | No Dock icon |
+| Audio capture | `AVFoundation` (`AVAudioEngine`) | Graph-based, installable tap |
+| Transcription | WhisperKit (`argmaxinc/whisperkit-coreml`) | Core ML, Apple Neural Engine |
+| Model | `openai_whisper-large-v3-turbo` | Best latency/accuracy tradeoff |
+| Model storage | `~/.local/share/voiceshell/models/` | User-owned, inspectable |
+| Hotkeys | `KeyboardShortcuts` (sindresorhus) | Wraps NSEvent global monitors |
+| Shell integration | ZLE fd watcher (zsh) | Terminal-agnostic, shell-level |
+| Session registry | `~/.config/voiceshell/sessions/` | Per-session pipe registration |
+
+### Dependencies Policy
+Only WhisperKit and KeyboardShortcuts are permitted as third-party dependencies. Any addition requires explicit justification against implementing the functionality directly.
+
+---
+
+## 5. Mode System
+
+Two operational modes, toggled by a persistent hotkey.
+
+### PTT (Push-to-Talk) — default
+- Hold PTT key → mic records → release → transcribe → append to terminal buffer immediately
+- Hold Command mode modifier + PTT key → record single utterance → release → parse as command only (no append)
+
+### OPEN (Open Mic)
+- VAD runs continuously — every utterance transcribes and appends to terminal buffer automatically
+- Isolated command words trigger command parsing (see isolation algorithm below)
+- Normal utterances append to terminal buffer — ABORT is the only way to clear
+
+### Mode Toggle
+Dedicated hotkey switches between PTT and OPEN. State persists for the session. HUD displays current mode.
+
+### Default Hotkeys
+
+| Action | Key | Mechanism |
+|---|---|---|
+| PTT record | `Right Option (⌥)` hold | `NSEvent flagsChanged` |
+| PTT command mode | `Right Shift + Right Option` hold | `NSEvent flagsChanged` |
+| Mode toggle (PTT ↔ OPEN) | `Right Control (^)` tap | `KeyboardShortcuts` |
+
+All defaults use right-side modifier keys only. No conflicts with terminal control sequences, common IDE shortcuts, or macOS system shortcuts. Comfortable to reach without looking — suitable for treadmill use.
+
+---
+
+## 6. Command Vocabulary
+
+Minimal, opinionated. Military-style to prevent false positives in normal speech.
+
+| Command | Word | Action |
+|---|---|---|
+| Send | `ROGER` | Send Return keystroke to focused terminal. Does NOT re-inject text — text already present from prior injection. |
+| Clear | `ABORT` | Clear ZLE BUFFER in focused terminal + clear HUD. |
+
+Vocabulary is fixed. No user configuration.
+
+---
+
+## 7. Isolation Algorithm (OPEN mode command detection)
+
+```
+utterance arrives
+  silenceBefore > 1500ms  AND
+  duration < 2000ms        AND
+  [hold 800ms for trailing silence]  AND
+  no further speech detected         AND
+  text matches command vocabulary
+  → Intent.command(_)
+
+else
+  → Intent.inject(text)
+```
+
+All thresholds are compile-time constants inside `IntentResolver`. Not exposed to callers or users. May be tuned during initial UX development then fixed.
+
+---
+
+## 8. Module Contracts
+
+### AudioPipeline
+
+```swift
+protocol AudioPipeline {
+    func start()
+    func stop()
+    func forceEnd()  // PTT release — terminates segment regardless of VAD state
+    var segments: AsyncStream<SpeechSegment> { get }
+}
+
+struct SpeechSegment {
+    let audio: [Float]           // 16kHz mono Float32
+    let silenceBefore: Duration  // elapsed since last segment ended
+    let duration: Duration
+}
+```
+
+Hides: AVFoundation setup, audio format config, VAD algorithm, buffer accumulation, threading. Callers never touch AVFoundation.
+
+In PTT mode: `forceEnd()` overrides VAD on key release. In OPEN mode: VAD self-terminates segments. This difference is entirely internal.
+
+---
+
+### HotkeyManager
+
+```swift
+protocol HotkeyManager {
+    var events: AsyncStream<HotkeyEvent> { get }
+}
+
+enum HotkeyEvent {
+    case pttBegan
+    case pttEnded(mode: InputMode)
+    case modeToggled
+}
+
+enum InputMode {
+    case dictation  // normal — inject on speech end
+    case command    // modifier held — parse as vocabulary only, no injection
+}
+```
+
+Hides: NSEvent global monitors, modifier key tracking, KeyboardShortcuts integration, Accessibility permissions. Callers receive resolved intent of key combinations only.
+
+---
+
+### Transcriber
+
+```swift
+protocol Transcriber {
+    func transcribe(_ segment: SpeechSegment) async -> TranscriptionResult
+}
+
+struct TranscriptionResult {
+    let text: String
+    let confidence: Float
+    let segment: SpeechSegment  // timing carried through for IntentResolver
+}
+```
+
+Hides: WhisperKit initialization, model loading, Core ML scheduling, lazy warmup, model path resolution. One function in, one result out.
+
+---
+
+### IntentResolver
+
+```swift
+protocol IntentResolver {
+    func resolve(_ result: TranscriptionResult, mode: InputMode) -> Intent
+}
+
+enum Intent {
+    case inject(String)
+    case command(Command)
+    case discard            // confidence below threshold, or noise
+}
+
+enum Command {
+    case roger  // send Return only — text already in terminal
+    case abort  // clear terminal buffer + clear HUD
+}
+```
+
+Hides: isolation timing algorithm, all threshold constants, vocabulary matching, confidence floor. Callers receive only the resolved intent.
+
+---
+
+### OutputManager
+
+```swift
+protocol OutputManager {
+    func append(_ text: String)  // ZLE BUFFER += text, cursor at end
+    func send()                  // CGEvent Return keystroke
+    func clear()                 // ZLE BUFFER = ""
+}
+```
+
+Hides: session registry lookup, process tree walking, pipe path resolution, ZLE wire protocol, shell pipe I/O. Three operations, no implementation details exposed.
+
+`SessionController` always sequences these operations. They are never chained inside `OutputManager`.
+
+Each `append` call concatenates to the existing ZLE buffer (space-separated). `clear` resets to empty. This is the only mutation model — there is no replace operation.
+
+---
+
+### SessionController (coordinator)
+
+The only module that knows all others. It translates runtime events into output actions.
+
+```text
+1) pttEnded(.dictation)
+   pipeline: transcribe -> resolve
+   outcomes:
+   - .inject(t) -> output.append(t)
+   - .discard   -> no-op
+
+2) pttEnded(.command)
+   pipeline: transcribe -> resolve
+   outcomes:
+   - .command(.roger) -> output.send()
+   - .command(.abort) -> output.clear()
+   - .discard         -> no-op
+
+3) OPEN segment
+   pipeline: transcribe -> resolve
+   outcomes:
+   - .inject(t) -> output.append(t)
+   - .discard   -> no-op
+
+4) OPEN isolated command
+   pipeline: transcribe -> resolve
+   outcomes:
+   - .command(.roger) -> output.send()
+   - .command(.abort) -> output.clear()
+   - .discard         -> no-op
+```
+
+---
+
+### HUD
+
+Pure observer of `SessionController` state. No interface — subscribes to published state:
+
+```
+.recording    → show live partial transcription text
+.transcribing → show activity indicator
+.injected     → fade out (text now in terminal)
+.cleared      → dismiss immediately
+.idle         → hidden
+```
+
+Floating `NSWindow`, level `.floating`, `canBecomeKey = false`, click-through. Never steals focus from target application.
+
+---
+
+## 9. Shell Integration
+
+### Mechanism
+
+ZLE file descriptor watcher. Terminal-emulator agnostic — works in Ghostty, Terminal.app, iTerm2, VS Code integrated terminal, Obsidian terminal plugin, Zellij/tmux panes, or any emulator running zsh.
+
+### Shell Snippet (installed to ~/.zshrc)
+
+```zsh
+# VoiceShell integration — managed by VoiceShell.app
+VOICE_PIPE="/tmp/voiceshell-$$.pipe"
+VOICE_REGISTRY="$HOME/.config/voiceshell/sessions"
+
+mkfifo "$VOICE_PIPE" 2>/dev/null
+exec {VOICE_FD}<>"$VOICE_PIPE"
+mkdir -p "$VOICE_REGISTRY"
+echo "$VOICE_PIPE" > "$VOICE_REGISTRY/$$"
+trap "rm -f '$VOICE_REGISTRY/$$' '$VOICE_PIPE'" EXIT
+
+_voiceshell_inject() {
+    local action text
+    IFS='|' read -r action text <&$VOICE_FD
+    case $action in
+        inject) BUFFER="${BUFFER:+$BUFFER }$text"; CURSOR=${#BUFFER}; zle redisplay ;;
+        clear)  BUFFER=""; CURSOR=0; zle redisplay ;;
+    esac
+}
+
+zle -N _voiceshell_inject
+zle -F $VOICE_FD _voiceshell_inject
+# End VoiceShell integration
+```
+
+### Session Discovery (inside OutputManager)
+
+1. `NSWorkspace.shared.frontmostApplication` → focused app PID
+2. Walk process tree to find shell child with a registered session file
+3. Read pipe path from `~/.config/voiceshell/sessions/{pid}`
+4. Write `inject|{text}\n` or `clear|\n` to pipe
+
+### Install Flow
+
+App presents a one-time "Install Shell Integration" prompt on first launch. Appends the snippet to `~/.zshrc` with explicit confirmation. Displays exactly what will be written and where. Uninstall: remove the marked block from `~/.zshrc` and delete `~/.config/voiceshell/`.
+
+---
+
+## 10. Model
+
+| Property | Value |
+|---|---|
+| Format | Core ML (`.mlmodelc`) — not GGML |
+| Model | `openai_whisper-large-v3-turbo` |
+| Source | `argmaxinc/whisperkit-coreml` on HuggingFace |
+| Storage | `~/.local/share/voiceshell/models/` |
+| Init | Lazy — loads on first transcription, not app launch |
+| Swappable | Yes — `Transcriber` protocol decouples model from all callers |
+
+First utterance triggers download + compile if model is absent. HUD shows download progress. Subsequent launches are instant after first-transcription warmup.
+
+---
+
+## 11. Test Philosophy
+
+Tests are **proof that the implementation satisfies the spec**. They are the primary feedback loop for agentic contributors. Not documentation, not safety net — proof.
+
+### What Gets Tested
+
+**Property-based tests** for logic modules:
+
+- `IntentResolver`: for any transcription matching vocabulary text, with `silenceBefore > 1500ms` and `duration < 2000ms`, `resolve()` always returns `.command(_)` — never `.inject`, never `.discard`
+- `IntentResolver`: for any non-vocabulary text regardless of timing, `resolve()` never returns `.command(_)`
+- `IntentResolver`: for any transcription with confidence below threshold, `resolve()` always returns `.discard`
+- `OutputManager` (mocked pipe): any sequence of `append` calls followed by `clear` always results in empty buffer regardless of text content, length, or unicode composition
+- `OutputManager` (mocked pipe): multiple `append` calls always produce space-separated concatenation in pipe write order
+
+**End-to-end tests** for the pipeline (no hardware required — all inputs mocked):
+
+- Synthesized `SpeechSegment` with known audio → `Transcriber` → expected text output
+- Known `TranscriptionResult` with timing metadata → `IntentResolver` → expected `Intent` for all cases
+- `Intent` sequence → `OutputManager` (mock shell) → expected pipe writes in correct order and format
+- Full pipeline: mock `AudioPipeline` emitting known segments → expected shell pipe output
+
+### What Does Not Get Tested
+
+- `AVFoundation` behavior (Apple's responsibility)
+- WhisperKit transcription accuracy (Argmax's responsibility)
+- UI layout and HUD appearance
+- NSEvent/hotkey delivery timing
+
+### Test as Spec Enforcement
+
+Each E2E test maps to a named spec feature. A passing test suite is a verifiable claim that the feature works as specified. Tests must be runnable in CI without microphone hardware.
+
+---
+
+## 12. Coding Guidelines
+
+- Comments are acceptable but minimal. Code must be self-documenting. Comment only where intent cannot be inferred from naming and structure.
+- Do not split functions for brevity alone. Split only when the result is a deeper interface with better information hiding.
+- No shallow helper functions. A method that merely renames another method's call is noise.
+- Protocols over concrete types at module boundaries. Concrete types inside modules.
+- `actor` for any mutable state shared across async contexts. `@MainActor` only for UI updates.
+- Error handling: `precondition`/`fatalError` for programmer errors, graceful recovery for runtime failures (model download failure, pipe write failure, missing session).
+
+---
+
+## 13. Incremental Build Milestones
+
+Each milestone is independently verifiable. Milestones 1–3 require no hardware.
+
+| # | Milestone | Verifiable by |
+|---|---|---|
+| 1 | Write known string to `OutputManager`, verify it appears in ZLE buffer via pipe; verify append concatenates, clear resets | Shell observation, no audio |
+| 2 | Pass hardcoded `[Float]` through `WhisperKitTranscriber`, receive non-empty text | Unit assertion, no mic |
+| 3 | Feed mock `TranscriptionResult` into `IntentResolver`, verify correct `Intent` for all branches | Property-based test suite |
+| 4 | `AVAudioEngine` tap running, `SpeechSegment` emitted correctly on real speech with VAD silence detection | Mic required |
+| 5 | PTT full path: hold key → speak → release → text appears in terminal buffer | Hardware E2E |
+| 6 | OPEN mode: isolated ROGER/ABORT route to commands, normal speech injects | Hardware E2E |
+| 7 | HUD: appears on record, updates during transcription, dismisses correctly for all exit paths | Visual verification |
+| 8 | Shell integration installer: prompt, snippet written to `.zshrc`, registry operational across multiple sessions | Integration test |
