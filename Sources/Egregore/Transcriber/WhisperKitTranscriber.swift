@@ -4,7 +4,7 @@ import WhisperKit
 actor WhisperKitTranscriber: Transcriber {
     static let modelVariant = "openai_whisper-large-v3-turbo"
     static let modelStorageURL = URL.homeDirectory
-        .appending(path: ".local/share/voiceshell/models", directoryHint: .isDirectory)
+        .appending(path: ".local/share/egregore/models", directoryHint: .isDirectory)
 
     // Injected engine: receives raw audio, returns (text, avgLogprobs) without leaking WhisperKit types.
     // Production path creates WhisperKit lazily; test path injects a stub.

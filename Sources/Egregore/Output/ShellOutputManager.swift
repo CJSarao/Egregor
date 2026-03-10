@@ -5,7 +5,7 @@ import Darwin
 final class ShellOutputManager: OutputManager {
     private let sessionResolver: () -> String?
 
-    init(registryURL: URL = URL.homeDirectory.appending(path: ".config/voiceshell/sessions")) {
+    init(registryURL: URL = URL.homeDirectory.appending(path: ".config/egregore/sessions")) {
         self.sessionResolver = { ShellOutputManager.resolveSession(registryURL: registryURL) }
     }
 

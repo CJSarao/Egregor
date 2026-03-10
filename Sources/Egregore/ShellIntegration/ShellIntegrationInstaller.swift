@@ -1,14 +1,14 @@
 import Foundation
 
 struct ShellIntegrationInstaller {
-    private static let beginMarker = "# BEGIN VoiceShell integration — managed by VoiceShell.app"
-    private static let endMarker = "# END VoiceShell integration"
+    private static let beginMarker = "# BEGIN Egregore integration — managed by Egregore.app"
+    private static let endMarker = "# END Egregore integration"
 
     // Swift multiline raw string: closing """# at 4-space indent strips 4 spaces from each content line
     static let snippet: String = #"""
-    # BEGIN VoiceShell integration — managed by VoiceShell.app
-    VOICE_PIPE="/tmp/voiceshell-$$.pipe"
-    VOICE_REGISTRY="$HOME/.config/voiceshell/sessions"
+    # BEGIN Egregore integration — managed by Egregore.app
+    VOICE_PIPE="/tmp/egregore-$$.pipe"
+    VOICE_REGISTRY="$HOME/.config/egregore/sessions"
 
     mkfifo "$VOICE_PIPE" 2>/dev/null
     exec {VOICE_FD}<>"$VOICE_PIPE"
@@ -16,7 +16,7 @@ struct ShellIntegrationInstaller {
     echo "$VOICE_PIPE" > "$VOICE_REGISTRY/$$"
     trap "rm -f '$VOICE_REGISTRY/$$' '$VOICE_PIPE'" EXIT
 
-    _voiceshell_inject() {
+    _egregore_inject() {
         local action text
         IFS='|' read -r action text <&$VOICE_FD
         case $action in
@@ -25,23 +25,23 @@ struct ShellIntegrationInstaller {
         esac
     }
 
-    zle -N _voiceshell_inject
-    zle -F $VOICE_FD _voiceshell_inject
-    # END VoiceShell integration
+    zle -N _egregore_inject
+    zle -F $VOICE_FD _egregore_inject
+    # END Egregore integration
     """#
 
     let zshrcURL: URL
     let registryURL: URL
-    let voiceshellConfigURL: URL
+    let egregoreConfigURL: URL
 
     init(
         zshrcURL: URL = URL.homeDirectory.appending(path: ".zshrc"),
-        registryURL: URL = URL.homeDirectory.appending(path: ".config/voiceshell/sessions"),
-        voiceshellConfigURL: URL = URL.homeDirectory.appending(path: ".config/voiceshell")
+        registryURL: URL = URL.homeDirectory.appending(path: ".config/egregore/sessions"),
+        egregoreConfigURL: URL = URL.homeDirectory.appending(path: ".config/egregore")
     ) {
         self.zshrcURL = zshrcURL
         self.registryURL = registryURL
-        self.voiceshellConfigURL = voiceshellConfigURL
+        self.egregoreConfigURL = egregoreConfigURL
     }
 
     var isInstalled: Bool {
@@ -66,8 +66,8 @@ struct ShellIntegrationInstaller {
 
     func uninstall() throws {
         let fm = FileManager.default
-        if fm.fileExists(atPath: voiceshellConfigURL.path) {
-            try fm.removeItem(at: voiceshellConfigURL)
+        if fm.fileExists(atPath: egregoreConfigURL.path) {
+            try fm.removeItem(at: egregoreConfigURL)
         }
         guard fm.fileExists(atPath: zshrcURL.path),
               let content = try? String(contentsOf: zshrcURL, encoding: .utf8),

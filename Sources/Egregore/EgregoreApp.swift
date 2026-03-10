@@ -1,13 +1,13 @@
 import SwiftUI
 
 @main
-struct VoiceShellApp: App {
+struct EgregoreApp: App {
     init() {
         NSApp.setActivationPolicy(.accessory)
     }
 
     var body: some Scene {
-        MenuBarExtra("VoiceShell", systemImage: "waveform.badge.mic") {
+        MenuBarExtra("Egregore", systemImage: "waveform.badge.mic") {
             MenuBarView()
         }
     }

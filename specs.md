@@ -1,4 +1,4 @@
-# VoiceShell — Project Specification
+# Egregore — Project Specification
 
 *2026-03-09*
 #voice-control #terminal #swift #architecture #spec
@@ -63,10 +63,10 @@ For any significant abstraction, consider at least two approaches before committ
 | Audio capture | `AVFoundation` (`AVAudioEngine`) | Graph-based, installable tap |
 | Transcription | WhisperKit (`argmaxinc/whisperkit-coreml`) | Core ML, Apple Neural Engine |
 | Model | `openai_whisper-large-v3-turbo` | Best latency/accuracy tradeoff |
-| Model storage | `~/.local/share/voiceshell/models/` | User-owned, inspectable |
+| Model storage | `~/.local/share/egregore/models/` | User-owned, inspectable |
 | Hotkeys | `KeyboardShortcuts` (sindresorhus) | Wraps NSEvent global monitors |
 | Shell integration | ZLE fd watcher (zsh) | Terminal-agnostic, shell-level |
-| Session registry | `~/.config/voiceshell/sessions/` | Per-session pipe registration |
+| Session registry | `~/.config/egregore/sessions/` | Per-session pipe registration |
 
 ### Dependencies Policy
 Only WhisperKit and KeyboardShortcuts are permitted as third-party dependencies. Any addition requires explicit justification against implementing the functionality directly.
@@ -299,9 +299,9 @@ ZLE file descriptor watcher. Terminal-emulator agnostic — works in Ghostty, Te
 ### Shell Snippet (installed to ~/.zshrc)
 
 ```zsh
-# VoiceShell integration — managed by VoiceShell.app
-VOICE_PIPE="/tmp/voiceshell-$$.pipe"
-VOICE_REGISTRY="$HOME/.config/voiceshell/sessions"
+# Egregore integration — managed by Egregore.app
+VOICE_PIPE="/tmp/egregore-$$.pipe"
+VOICE_REGISTRY="$HOME/.config/egregore/sessions"
 
 mkfifo "$VOICE_PIPE" 2>/dev/null
 exec {VOICE_FD}<>"$VOICE_PIPE"
@@ -309,7 +309,7 @@ mkdir -p "$VOICE_REGISTRY"
 echo "$VOICE_PIPE" > "$VOICE_REGISTRY/$$"
 trap "rm -f '$VOICE_REGISTRY/$$' '$VOICE_PIPE'" EXIT
 
-_voiceshell_inject() {
+_egregore_inject() {
     local action text
     IFS='|' read -r action text <&$VOICE_FD
     case $action in
@@ -318,21 +318,21 @@ _voiceshell_inject() {
     esac
 }
 
-zle -N _voiceshell_inject
-zle -F $VOICE_FD _voiceshell_inject
-# End VoiceShell integration
+zle -N _egregore_inject
+zle -F $VOICE_FD _egregore_inject
+# End Egregore integration
 ```
 
 ### Session Discovery (inside OutputManager)
 
 1. `NSWorkspace.shared.frontmostApplication` → focused app PID
 2. Walk process tree to find shell child with a registered session file
-3. Read pipe path from `~/.config/voiceshell/sessions/{pid}`
+3. Read pipe path from `~/.config/egregore/sessions/{pid}`
 4. Write `inject|{text}\n` or `clear|\n` to pipe
 
 ### Install Flow
 
-App presents a one-time "Install Shell Integration" prompt on first launch. Appends the snippet to `~/.zshrc` with explicit confirmation. Displays exactly what will be written and where. Uninstall: remove the marked block from `~/.zshrc` and delete `~/.config/voiceshell/`.
+App presents a one-time "Install Shell Integration" prompt on first launch. Appends the snippet to `~/.zshrc` with explicit confirmation. Displays exactly what will be written and where. Uninstall: remove the marked block from `~/.zshrc` and delete `~/.config/egregore/`.
 
 ---
 
@@ -343,7 +343,7 @@ App presents a one-time "Install Shell Integration" prompt on first launch. Appe
 | Format | Core ML (`.mlmodelc`) — not GGML |
 | Model | `openai_whisper-large-v3-turbo` |
 | Source | `argmaxinc/whisperkit-coreml` on HuggingFace |
-| Storage | `~/.local/share/voiceshell/models/` |
+| Storage | `~/.local/share/egregore/models/` |
 | Init | Lazy — loads on first transcription, not app launch |
 | Swappable | Yes — `Transcriber` protocol decouples model from all callers |
 

@@ -1,4 +1,4 @@
-# VoiceShell
+# Egregore
 
 A macOS menu bar app that transcribes your voice and types it into the terminal. Built for hands-free shell interaction — say a command while walking on a treadmill and it appears in your zsh buffer.
 
@@ -10,7 +10,7 @@ Not a voice assistant. Not dictation software. A focused tool: voice goes in, te
 hold Right Option → speak → release → text appears in terminal
 ```
 
-VoiceShell captures audio, runs it through WhisperKit (on-device speech recognition via Apple's Neural Engine), decides what to do with the result, and writes it into your shell's line editor over a named pipe. Your terminal never loses focus.
+Egregore captures audio, runs it through WhisperKit (on-device speech recognition via Apple's Neural Engine), decides what to do with the result, and writes it into your shell's line editor over a named pipe. Your terminal never loses focus.
 
 Two modes:
 
@@ -37,14 +37,14 @@ swift build
 swift test       # 128 tests, no hardware needed
 ```
 
-The binary lands in `.build/debug/VoiceShell`. On first transcription, WhisperKit downloads the Whisper model (~1 GB) to `~/.local/share/voiceshell/models/`.
+The binary lands in `.build/debug/Egregore`. On first transcription, WhisperKit downloads the Whisper model (~1 GB) to `~/.local/share/egregore/models/`.
 
 ## Project Structure
 
 ```
 Package.swift                       # Swift Package Manager manifest
-Sources/VoiceShell/
-├── VoiceShellApp.swift             # Entry point — menu bar app, no Dock icon
+Sources/Egregore/
+├── EgregoreApp.swift             # Entry point — menu bar app, no Dock icon
 ├── SessionController.swift         # The coordinator — connects everything
 ├── Domain/
 │   ├── Protocols.swift             # 5 protocols defining module boundaries
@@ -56,7 +56,7 @@ Sources/VoiceShell/
 ├── Transcriber/
 │   └── WhisperKitTranscriber.swift # Speech-to-text via WhisperKit
 ├── Resolver/
-│   └── VoiceShellIntentResolver.swift  # Decides: inject text, run command, or discard
+│   └── EgregoreIntentResolver.swift  # Decides: inject text, run command, or discard
 ├── Output/
 │   └── ShellOutputManager.swift    # Writes to zsh's line buffer via named pipe
 ├── HUD/
@@ -65,7 +65,7 @@ Sources/VoiceShell/
 │   └── MenuBarView.swift           # Menu bar UI
 └── ShellIntegration/
     └── ShellIntegrationInstaller.swift # Installs the zsh snippet into ~/.zshrc
-Tests/VoiceShellTests/              # 10 test files, 128 tests total
+Tests/EgregoreTests/              # 10 test files, 128 tests total
 ```
 
 ## Architecture (for the Curious)
@@ -74,7 +74,7 @@ This is a good codebase to study if you're learning Swift. It uses several patte
 
 ### Protocols as Module Boundaries
 
-Open `Sources/VoiceShell/Domain/Protocols.swift` — five protocols, each under 10 lines:
+Open `Sources/Egregore/Domain/Protocols.swift` — five protocols, each under 10 lines:
 
 ```swift
 protocol AudioPipeline {
@@ -164,13 +164,13 @@ The entire app setup is 9 lines:
 
 ```swift
 @main
-struct VoiceShellApp: App {
+struct EgregoreApp: App {
     init() {
         NSApp.setActivationPolicy(.accessory)  // no Dock icon
     }
 
     var body: some Scene {
-        MenuBarExtra("VoiceShell", systemImage: "waveform.badge.mic") {
+        MenuBarExtra("Egregore", systemImage: "waveform.badge.mic") {
             MenuBarView()
         }
     }
@@ -181,11 +181,11 @@ struct VoiceShellApp: App {
 
 ### How the Shell Integration Works
 
-This is the most interesting systems-level piece. VoiceShell doesn't simulate keystrokes to type text (fragile, slow). Instead, it writes directly into zsh's line editor (ZLE) via a named pipe:
+This is the most interesting systems-level piece. Egregore doesn't simulate keystrokes to type text (fragile, slow). Instead, it writes directly into zsh's line editor (ZLE) via a named pipe:
 
 1. A zsh snippet (installed into `~/.zshrc`) creates a named pipe per shell session
 2. ZLE watches the pipe's file descriptor for incoming data
-3. VoiceShell finds the active terminal's shell PID, looks up its pipe path, and writes `inject|hello world\n`
+3. Egregore finds the active terminal's shell PID, looks up its pipe path, and writes `inject|hello world\n`
 4. ZLE reads it and sets `BUFFER="hello world"` — text appears instantly
 
 This is terminal-emulator agnostic. Works in any app running zsh: Ghostty, Terminal.app, iTerm2, VS Code terminal, tmux panes.
@@ -213,7 +213,7 @@ If you're studying this codebase, read in this order:
 
 1. **`Domain/Types.swift`** — all the value types. Small file, sets up the vocabulary.
 2. **`Domain/Protocols.swift`** — the five module contracts. Read these before any implementation.
-3. **`Resolver/VoiceShellIntentResolver.swift`** — the simplest implementation. Pure logic, no frameworks, no async. Good example of how a protocol gets implemented.
+3. **`Resolver/EgregoreIntentResolver.swift`** — the simplest implementation. Pure logic, no frameworks, no async. Good example of how a protocol gets implemented.
 4. **`SessionController.swift`** — the coordinator. Shows how `actor`, `AsyncStream`, and `for await` work together.
 5. **`Audio/AVAudioEnginePipeline.swift`** — the most complex module. Shows how to wrap a framework API behind a clean protocol.
 

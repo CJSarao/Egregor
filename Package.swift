@@ -2,10 +2,10 @@
 import PackageDescription
 
 let package = Package(
-    name: "VoiceShell",
+    name: "Egregore",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "VoiceShell", targets: ["VoiceShell"])
+        .executable(name: "Egregore", targets: ["Egregore"])
     ],
     dependencies: [
         .package(url: "https://github.com/argmaxinc/WhisperKit", from: "0.16.0"),
@@ -13,17 +13,17 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "VoiceShell",
+            name: "Egregore",
             dependencies: [
                 .product(name: "WhisperKit", package: "whisperkit"),
                 .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
             ],
-            path: "Sources/VoiceShell"
+            path: "Sources/Egregore"
         ),
         .testTarget(
-            name: "VoiceShellTests",
-            dependencies: ["VoiceShell"],
-            path: "Tests/VoiceShellTests"
+            name: "EgregoreTests",
+            dependencies: ["Egregore"],
+            path: "Tests/EgregoreTests"
         ),
     ]
 )

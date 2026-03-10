@@ -1,5 +1,5 @@
 import XCTest
-@testable import VoiceShell
+@testable import Egregore
 
 // Tests inject events via processFlagsChanged — no hardware or NSEvent delivery needed.
 // Each processFlagsChanged call is awaited on the actor before iter.next(), so emitted

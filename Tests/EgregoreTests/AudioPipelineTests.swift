@@ -1,5 +1,5 @@
 import XCTest
-@testable import VoiceShell
+@testable import Egregore
 
 // Tests use processChunk(_:) directly (internal actor method, no hardware needed).
 // Each await pipeline.processChunk(...) runs to completion on the actor before

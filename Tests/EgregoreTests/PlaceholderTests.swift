@@ -1,6 +1,6 @@
 import XCTest
 
-final class VoiceShellBuildTests: XCTestCase {
+final class EgregoreBuildTests: XCTestCase {
     func testPackageBuilds() {
         XCTAssertTrue(true)
     }

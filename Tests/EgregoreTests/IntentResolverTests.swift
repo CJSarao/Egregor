@@ -1,8 +1,8 @@
 import XCTest
-@testable import VoiceShell
+@testable import Egregore
 
 final class IntentResolverTests: XCTestCase {
-    let resolver = VoiceShellIntentResolver()
+    let resolver = EgregoreIntentResolver()
 
     // MARK: - Helpers
 

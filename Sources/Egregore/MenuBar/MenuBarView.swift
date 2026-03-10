@@ -2,10 +2,10 @@ import SwiftUI
 
 struct MenuBarView: View {
     var body: some View {
-        Text("VoiceShell")
+        Text("Egregore")
             .padding(.vertical, 4)
         Divider()
-        Button("Quit VoiceShell") {
+        Button("Quit Egregore") {
             NSApplication.shared.terminate(nil)
         }
         .keyboardShortcut("q")

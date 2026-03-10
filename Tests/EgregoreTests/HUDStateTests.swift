@@ -1,5 +1,5 @@
 import XCTest
-@testable import VoiceShell
+@testable import Egregore
 
 // MARK: - HUD state emission tests
 
@@ -50,7 +50,7 @@ final class HUDStateTests: XCTestCase {
         let txr      = MockTranscriber(makeResult(text: ""))
         let output   = MockOutputManager()
         let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         let stateTask = Task { await self.collectStates(from: ctrl, count: 1) }
@@ -69,7 +69,7 @@ final class HUDStateTests: XCTestCase {
         let txr      = MockTranscriber(makeResult(text: "git status"))
         let output   = MockOutputManager()
         let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         // recording + transcribing + injected = 3 states
@@ -94,7 +94,7 @@ final class HUDStateTests: XCTestCase {
         let txr      = MockTranscriber(makeResult(text: "noise", confidence: 0.05))
         let output   = MockOutputManager()
         let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         // recording + transcribing + idle = 3 states
@@ -119,7 +119,7 @@ final class HUDStateTests: XCTestCase {
         let txr      = MockTranscriber(makeResult(text: "ROGER"))
         let output   = MockOutputManager()
         let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         let stateTask = Task { await self.collectStates(from: ctrl, count: 3) }
@@ -141,7 +141,7 @@ final class HUDStateTests: XCTestCase {
         let txr      = MockTranscriber(makeResult(text: "ABORT"))
         let output   = MockOutputManager()
         let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         let stateTask = Task { await self.collectStates(from: ctrl, count: 3) }
@@ -165,7 +165,7 @@ final class HUDStateTests: XCTestCase {
         let txr      = MockTranscriber(makeResult(text: ""))
         let output   = MockOutputManager()
         let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         let stateTask = Task { await self.collectStates(from: ctrl, count: 1) }
@@ -184,7 +184,7 @@ final class HUDStateTests: XCTestCase {
         let txr      = MockTranscriber(makeResult(text: ""))
         let output   = MockOutputManager()
         let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         // open + idle = 2 states
@@ -208,7 +208,7 @@ final class HUDStateTests: XCTestCase {
         let txr      = MockTranscriber(makeResult(text: "ls -la", silenceBefore: .milliseconds(200)))
         let output   = MockOutputManager()
         let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         // recording(open) + transcribing + injected = 3
@@ -235,7 +235,7 @@ final class HUDStateTests: XCTestCase {
                                                    duration: .milliseconds(800)))
         let output   = MockOutputManager()
         let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         let stateTask = Task { await self.collectStates(from: ctrl, count: 3) }
@@ -259,7 +259,7 @@ final class HUDStateTests: XCTestCase {
         let txr      = MockTranscriber(makeResult(text: ""))
         let output   = MockOutputManager()
         let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         // Toggle to open → recording(.open), toggle back → idle, pttBegan → recording(.ptt)

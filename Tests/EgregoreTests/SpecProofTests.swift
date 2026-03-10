@@ -1,6 +1,6 @@
 import XCTest
 import Darwin
-@testable import VoiceShell
+@testable import Egregore
 
 // MARK: - Property-Based: IntentResolver
 
@@ -8,7 +8,7 @@ import Darwin
 /// Each test runs randomized inputs over many iterations to verify invariants.
 final class IntentResolverPropertyTests: XCTestCase {
 
-    let resolver = VoiceShellIntentResolver()
+    let resolver = EgregoreIntentResolver()
     let iterations = 200
 
     // MARK: Helpers
@@ -147,7 +147,7 @@ final class IntentResolverPropertyTests: XCTestCase {
 final class OutputManagerPropertyTests: XCTestCase {
 
     private func makePipe() -> (path: String, fd: Int32) {
-        let path = "/tmp/voiceshell-prop-\(getpid())-\(UInt32.random(in: 0..<UInt32.max)).pipe"
+        let path = "/tmp/egregore-prop-\(getpid())-\(UInt32.random(in: 0..<UInt32.max)).pipe"
         Darwin.mkfifo(path, 0o600)
         let fd = Darwin.open(path, O_RDWR)
         precondition(fd >= 0, "Failed to open test FIFO at \(path)")
@@ -252,49 +252,49 @@ final class SpecEndToEndTests: XCTestCase {
     // MARK: E2E Milestone 3 — IntentResolver all branches
 
     func testResolverDictationInject() {
-        let resolver = VoiceShellIntentResolver()
+        let resolver = EgregoreIntentResolver()
         let segment = makeSegment(silenceBefore: .milliseconds(100))
         let result = TranscriptionResult(text: "npm install", confidence: 0.9, segment: segment)
         XCTAssertEqual(resolver.resolve(result, mode: .dictation), .inject("npm install"))
     }
 
     func testResolverDictationIsolatedRoger() {
-        let resolver = VoiceShellIntentResolver()
+        let resolver = EgregoreIntentResolver()
         let segment = makeSegment(silenceBefore: .milliseconds(2000), duration: .milliseconds(500))
         let result = TranscriptionResult(text: "ROGER", confidence: 0.9, segment: segment)
         XCTAssertEqual(resolver.resolve(result, mode: .dictation), .command(.roger))
     }
 
     func testResolverDictationIsolatedAbort() {
-        let resolver = VoiceShellIntentResolver()
+        let resolver = EgregoreIntentResolver()
         let segment = makeSegment(silenceBefore: .milliseconds(2000), duration: .milliseconds(500))
         let result = TranscriptionResult(text: "ABORT", confidence: 0.9, segment: segment)
         XCTAssertEqual(resolver.resolve(result, mode: .dictation), .command(.abort))
     }
 
     func testResolverCommandRoger() {
-        let resolver = VoiceShellIntentResolver()
+        let resolver = EgregoreIntentResolver()
         let segment = makeSegment()
         let result = TranscriptionResult(text: "ROGER", confidence: 0.9, segment: segment)
         XCTAssertEqual(resolver.resolve(result, mode: .command), .command(.roger))
     }
 
     func testResolverCommandAbort() {
-        let resolver = VoiceShellIntentResolver()
+        let resolver = EgregoreIntentResolver()
         let segment = makeSegment()
         let result = TranscriptionResult(text: "ABORT", confidence: 0.9, segment: segment)
         XCTAssertEqual(resolver.resolve(result, mode: .command), .command(.abort))
     }
 
     func testResolverDiscardsLowConfidence() {
-        let resolver = VoiceShellIntentResolver()
+        let resolver = EgregoreIntentResolver()
         let segment = makeSegment()
         let result = TranscriptionResult(text: "ROGER", confidence: 0.1, segment: segment)
         XCTAssertEqual(resolver.resolve(result, mode: .command), .discard)
     }
 
     func testResolverCommandModeNonVocabularyDiscards() {
-        let resolver = VoiceShellIntentResolver()
+        let resolver = EgregoreIntentResolver()
         let segment = makeSegment()
         let result = TranscriptionResult(text: "git push", confidence: 0.9, segment: segment)
         XCTAssertEqual(resolver.resolve(result, mode: .command), .discard)
@@ -347,7 +347,7 @@ final class SpecEndToEndTests: XCTestCase {
                                 segment: makeSegment(silenceBefore: .milliseconds(200)))
         )
         let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                     transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         hotkeys.emit(.pttBegan)
@@ -370,7 +370,7 @@ final class SpecEndToEndTests: XCTestCase {
             TranscriptionResult(text: "ROGER", confidence: 0.9, segment: makeSegment())
         )
         let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                     transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         hotkeys.emit(.pttBegan)
@@ -392,7 +392,7 @@ final class SpecEndToEndTests: XCTestCase {
             TranscriptionResult(text: "ABORT", confidence: 0.9, segment: makeSegment())
         )
         let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                     transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         hotkeys.emit(.pttBegan)
@@ -417,7 +417,7 @@ final class SpecEndToEndTests: XCTestCase {
             TranscriptionResult(text: "ROGER", confidence: 0.1, segment: makeSegment())
         )
         let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                     transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         hotkeys.emit(.pttBegan)
@@ -441,7 +441,7 @@ final class SpecEndToEndTests: XCTestCase {
                                 segment: makeSegment(silenceBefore: .milliseconds(2000), duration: .milliseconds(800)))
         )
         let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                     transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         hotkeys.emit(.modeToggled)
@@ -465,7 +465,7 @@ final class SpecEndToEndTests: XCTestCase {
                                 segment: makeSegment(silenceBefore: .milliseconds(200), duration: .milliseconds(1500)))
         )
         let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                     transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         hotkeys.emit(.modeToggled)
@@ -498,7 +498,7 @@ final class SpecEndToEndTests: XCTestCase {
 
         let txr = SequentialMockTranscriber(results: results)
         let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                     transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         hotkeys.emit(.modeToggled)
@@ -518,7 +518,7 @@ final class SpecEndToEndTests: XCTestCase {
     // MARK: Pipe helpers
 
     private func makePipeForE2E() -> (path: String, fd: Int32) {
-        let path = "/tmp/voiceshell-e2e-\(getpid())-\(UInt32.random(in: 0..<UInt32.max)).pipe"
+        let path = "/tmp/egregore-e2e-\(getpid())-\(UInt32.random(in: 0..<UInt32.max)).pipe"
         Darwin.mkfifo(path, 0o600)
         let fd = Darwin.open(path, O_RDWR)
         precondition(fd >= 0, "Failed to open test FIFO")

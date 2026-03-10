@@ -6,7 +6,7 @@
   - The project builds on macOS 14.0+ as a menu bar app with no Dock icon
   - WhisperKit and KeyboardShortcuts are the only third-party dependencies declared
   - Core protocols and domain types from the spec exist with module boundaries that hide implementation details
-- verify: xcodebuild -scheme VoiceShell -destination 'platform=macOS' build
+- verify: xcodebuild -scheme Egregore -destination 'platform=macOS' build
 
 ## Task 2
 - desc: Implement the shell integration installer and managed zsh snippet lifecycle for per-session pipe registration
@@ -14,8 +14,8 @@
 - passes: true
 - ac:
   - First-launch flow can present the exact managed zsh integration block before writing to ~/.zshrc
-  - Install appends the marked block idempotently and creates the session registry directory layout under ~/.config/voiceshell/
-  - Uninstall removes the managed block from ~/.zshrc and deletes VoiceShell shell integration state
+  - Install appends the marked block idempotently and creates the session registry directory layout under ~/.config/egregore/
+  - Uninstall removes the managed block from ~/.zshrc and deletes Egregore shell integration state
 - verify: swift test --filter ShellIntegrationInstallerTests
 
 ## Task 3
@@ -43,7 +43,7 @@
 - deps: Task 1
 - passes: true
 - ac:
-  - The transcriber stores the Core ML Whisper model under ~/.local/share/voiceshell/models/
+  - The transcriber stores the Core ML Whisper model under ~/.local/share/egregore/models/
   - First transcription triggers lazy download and compile when the model is missing, while later transcriptions reuse the cached model
   - Transcription results return text, confidence, and original segment timing metadata without leaking WhisperKit internals
 - verify: swift test --filter WhisperKitTranscriberTests
@@ -86,7 +86,7 @@
   - The HUD presents in a non-key, click-through floating window that never steals focus from the active terminal
   - Recording shows live partial text, transcribing shows activity, injected fades out, cleared dismisses immediately, and idle stays hidden
   - HUD mode indication reflects the current PTT or OPEN state while remaining driven only by published controller state
-- verify: xcodebuild test -scheme VoiceShell -destination 'platform=macOS' -only-testing:VoiceShellTests/HUDStateTests
+- verify: xcodebuild test -scheme Egregore -destination 'platform=macOS' -only-testing:EgregoreTests/HUDStateTests
 
 ## Task 10
 - desc: Add proof-oriented property and end-to-end tests that map directly to the spec milestones and run in CI without microphone hardware

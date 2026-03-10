@@ -1,6 +1,6 @@
 import Foundation
 
-struct VoiceShellIntentResolver: IntentResolver {
+struct EgregoreIntentResolver: IntentResolver {
     private static let silenceBeforeThreshold: Duration = .milliseconds(1500)
     private static let durationThreshold: Duration = .milliseconds(2000)
     private static let confidenceFloor: Float = 0.3

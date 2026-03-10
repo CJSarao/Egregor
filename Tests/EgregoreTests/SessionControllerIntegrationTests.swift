@@ -1,5 +1,5 @@
 import XCTest
-@testable import VoiceShell
+@testable import Egregore
 
 // MARK: - Test doubles
 
@@ -100,7 +100,7 @@ final class SessionControllerIntegrationTests: XCTestCase {
         let pipeline = MockAudioPipeline(nextSegment: makeSpeechSegment())
         let txr      = MockTranscriber(makeTranscriptionResult(text: "git status"))
         let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         hotkeys.emit(.pttBegan)
@@ -128,7 +128,7 @@ final class SessionControllerIntegrationTests: XCTestCase {
         let pipeline = MockAudioPipeline(nextSegment: segment)
         let txr      = MockTranscriber(makeTranscriptionResult(text: "noise", confidence: 0.05))
         let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         hotkeys.emit(.pttBegan)
@@ -151,7 +151,7 @@ final class SessionControllerIntegrationTests: XCTestCase {
         let pipeline = MockAudioPipeline(nextSegment: makeSpeechSegment())
         let txr      = MockTranscriber(makeTranscriptionResult(text: "ROGER"))
         let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         hotkeys.emit(.pttBegan)
@@ -174,7 +174,7 @@ final class SessionControllerIntegrationTests: XCTestCase {
         let pipeline = MockAudioPipeline(nextSegment: makeSpeechSegment())
         let txr      = MockTranscriber(makeTranscriptionResult(text: "ABORT"))
         let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         hotkeys.emit(.pttBegan)
@@ -200,7 +200,7 @@ final class SessionControllerIntegrationTests: XCTestCase {
         let pipeline = MockAudioPipeline(nextSegment: makeSpeechSegment())
         let txr      = MockTranscriber(makeTranscriptionResult(text: "git status"))
         let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         hotkeys.emit(.pttBegan)
@@ -220,7 +220,7 @@ final class SessionControllerIntegrationTests: XCTestCase {
         let txr      = MockTranscriber(makeTranscriptionResult(text: ""))
         let output   = MockOutputManager()
         let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         hotkeys.emit(.modeToggled)
@@ -239,7 +239,7 @@ final class SessionControllerIntegrationTests: XCTestCase {
         let txr      = MockTranscriber(makeTranscriptionResult(text: ""))
         let output   = MockOutputManager()
         let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         hotkeys.emit(.modeToggled)
@@ -264,7 +264,7 @@ final class SessionControllerIntegrationTests: XCTestCase {
         // Non-isolated (short silenceBefore) → inject
         let txr = MockTranscriber(makeTranscriptionResult(text: "ls -la", silenceBefore: .milliseconds(200)))
         let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                     transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         hotkeys.emit(.modeToggled)               // enter OPEN mode
@@ -289,7 +289,7 @@ final class SessionControllerIntegrationTests: XCTestCase {
                                                           silenceBefore: .milliseconds(2000),
                                                           duration: .milliseconds(800)))
         let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                     transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         hotkeys.emit(.modeToggled)
@@ -314,7 +314,7 @@ final class SessionControllerIntegrationTests: XCTestCase {
                                                           silenceBefore: .milliseconds(2000),
                                                           duration: .milliseconds(800)))
         let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                     transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         hotkeys.emit(.modeToggled)
@@ -340,7 +340,7 @@ final class SessionControllerIntegrationTests: XCTestCase {
         let pipeline = MockAudioPipeline(nextSegment: makeSpeechSegment())
         let txr      = MockTranscriber(makeTranscriptionResult(text: "ROGER"))
         let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: VoiceShellIntentResolver(), output: output)
+                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
         hotkeys.emit(.modeToggled)           // switch to OPEN

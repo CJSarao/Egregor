@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import VoiceShell
+@testable import Egregore
 
 private actor Counter {
     private(set) var value = 0
@@ -115,6 +115,6 @@ final class WhisperKitTranscriberTests: XCTestCase {
 
     func testModelStorageURLIsUnderDotLocal() {
         let url = WhisperKitTranscriber.modelStorageURL
-        XCTAssertTrue(url.path.contains(".local/share/voiceshell/models"))
+        XCTAssertTrue(url.path.contains(".local/share/egregore/models"))
     }
 }

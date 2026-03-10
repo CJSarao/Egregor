@@ -1,5 +1,5 @@
 import XCTest
-@testable import VoiceShell
+@testable import Egregore
 
 final class ShellIntegrationInstallerTests: XCTestCase {
     var tempDir: URL!
@@ -8,12 +8,12 @@ final class ShellIntegrationInstallerTests: XCTestCase {
     override func setUp() {
         super.setUp()
         tempDir = FileManager.default.temporaryDirectory
-            .appending(path: "VoiceShellTests-\(UUID().uuidString)")
+            .appending(path: "EgregoreTests-\(UUID().uuidString)")
         try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         installer = ShellIntegrationInstaller(
             zshrcURL: tempDir.appending(path: ".zshrc"),
-            registryURL: tempDir.appending(path: "voiceshell/sessions"),
-            voiceshellConfigURL: tempDir.appending(path: "voiceshell")
+            registryURL: tempDir.appending(path: "egregore/sessions"),
+            egregoreConfigURL: tempDir.appending(path: "egregore")
         )
     }
 
@@ -24,11 +24,11 @@ final class ShellIntegrationInstallerTests: XCTestCase {
 
     func testSnippetContainsRequiredElements() {
         let s = ShellIntegrationInstaller.snippet
-        XCTAssertTrue(s.contains("BEGIN VoiceShell integration"))
-        XCTAssertTrue(s.contains("END VoiceShell integration"))
+        XCTAssertTrue(s.contains("BEGIN Egregore integration"))
+        XCTAssertTrue(s.contains("END Egregore integration"))
         XCTAssertTrue(s.contains("VOICE_PIPE"))
         XCTAssertTrue(s.contains("VOICE_REGISTRY"))
-        XCTAssertTrue(s.contains("_voiceshell_inject"))
+        XCTAssertTrue(s.contains("_egregore_inject"))
         XCTAssertTrue(s.contains("inject)"))
         XCTAssertTrue(s.contains("clear)"))
         XCTAssertTrue(s.contains("zle -F"))
@@ -54,15 +54,15 @@ final class ShellIntegrationInstallerTests: XCTestCase {
         try installer.install()
         let content = try String(contentsOf: installer.zshrcURL, encoding: .utf8)
         XCTAssertTrue(content.contains("# existing content"))
-        XCTAssertTrue(content.contains("BEGIN VoiceShell integration"))
-        XCTAssertTrue(content.contains("_voiceshell_inject"))
+        XCTAssertTrue(content.contains("BEGIN Egregore integration"))
+        XCTAssertTrue(content.contains("_egregore_inject"))
     }
 
     func testInstallIsIdempotent() throws {
         try installer.install()
         try installer.install()
         let content = try String(contentsOf: installer.zshrcURL, encoding: .utf8)
-        XCTAssertEqual(content.components(separatedBy: "BEGIN VoiceShell integration").count - 1, 1)
+        XCTAssertEqual(content.components(separatedBy: "BEGIN Egregore integration").count - 1, 1)
     }
 
     func testIsInstalledAfterInstall() throws {
@@ -77,15 +77,15 @@ final class ShellIntegrationInstallerTests: XCTestCase {
         try installer.uninstall()
         let content = try String(contentsOf: installer.zshrcURL, encoding: .utf8)
         XCTAssertTrue(content.contains("# existing content"))
-        XCTAssertFalse(content.contains("BEGIN VoiceShell integration"))
-        XCTAssertFalse(content.contains("_voiceshell_inject"))
+        XCTAssertFalse(content.contains("BEGIN Egregore integration"))
+        XCTAssertFalse(content.contains("_egregore_inject"))
     }
 
     func testUninstallRemovesRegistryDirectory() throws {
         try installer.install()
-        XCTAssertTrue(FileManager.default.fileExists(atPath: installer.voiceshellConfigURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: installer.egregoreConfigURL.path))
         try installer.uninstall()
-        XCTAssertFalse(FileManager.default.fileExists(atPath: installer.voiceshellConfigURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: installer.egregoreConfigURL.path))
     }
 
     func testUninstallIsIdempotentWhenNotInstalled() throws {

@@ -1,13 +1,13 @@
 import XCTest
 import Darwin
-@testable import VoiceShell
+@testable import Egregore
 
 final class OutputManagerTests: XCTestCase {
 
     // Opens the FIFO with O_RDWR so both ends are held — no blocking on open,
     // and a non-blocking writer (ShellOutputManager) can connect immediately.
     private func makePipe() -> (path: String, fd: Int32) {
-        let path = "/tmp/voiceshell-test-\(getpid())-\(UInt32.random(in: 0..<UInt32.max)).pipe"
+        let path = "/tmp/egregore-test-\(getpid())-\(UInt32.random(in: 0..<UInt32.max)).pipe"
         Darwin.mkfifo(path, 0o600)
         let fd = Darwin.open(path, O_RDWR)
         precondition(fd >= 0, "Failed to open test FIFO at \(path)")
