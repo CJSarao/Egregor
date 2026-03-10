@@ -1,5 +1,7 @@
 # Egregore
 
+> **Warning:** This project is a work in progress. Expect breaking changes and instability.
+
 A macOS menu bar app that transcribes your voice and types it into the terminal. Built for hands-free shell interaction — say a command while walking on a treadmill and it appears in your zsh buffer.
 
 Not a voice assistant. Not dictation software. A focused tool: voice goes in, text lands in your terminal.
