@@ -111,7 +111,7 @@
 ## Task 12
 - desc: Make terminal injection and command dispatch observable and reliable against a real zsh session after shell integration install
 - deps: Task 11
-- passes: false
+- passes: true
 - ac:
   - OPEN-mode and PTT final transcriptions either append to the active terminal buffer or emit logs showing exactly where resolution failed
   - Session discovery logs include the frontmost app PID, shell PID traversal, and session file or pipe outcome without exposing implementation details to callers

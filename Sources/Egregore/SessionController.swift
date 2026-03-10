@@ -95,25 +95,26 @@ actor SessionController {
             log.log("transcription: \"\(result.text)\" confidence=\(result.confidence)", category: .session)
             let intent = resolver.resolve(result, mode: mode)
             log.log("resolved intent: \(intent)", category: .session)
-            dispatch(intent)
+            dispatch(intent, result: result)
         }
     }
 
-    private func dispatch(_ intent: Intent) {
+    private func dispatch(_ intent: Intent, result: TranscriptionResult) {
         switch intent {
         case .inject(let text):
+            log.log("dispatch: inject \"\(text)\"", category: .session)
             output.append(text)
             hudContinuation.yield(.injected(text))
         case .command(.roger):
-            log.log("dispatch: ROGER → send", category: .session)
+            log.log("dispatch: ROGER → send (confidence=\(result.confidence))", category: .session)
             output.send()
             hudContinuation.yield(.injected("⏎"))
         case .command(.abort):
-            log.log("dispatch: ABORT → clear", category: .session)
+            log.log("dispatch: ABORT → clear (confidence=\(result.confidence))", category: .session)
             output.clear()
             hudContinuation.yield(.cleared)
         case .discard:
-            log.log("dispatch: discard → no-op", category: .session)
+            log.log("dispatch: discard — text=\"\(result.text)\" confidence=\(result.confidence)", category: .session)
             hudContinuation.yield(.idle)
         }
     }

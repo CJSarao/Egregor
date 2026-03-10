@@ -18,25 +18,29 @@ final class ShellOutputManager: OutputManager {
     }
 
     func append(_ text: String) {
-        log.log("append: \(text.count) chars", category: .output)
+        log.log("append: \"\(text)\"", category: .output)
         writeToPipe("inject|\(text)\n")
     }
 
     func clear() {
-        log.log("clear", category: .output)
+        log.log("clear: resetting terminal buffer", category: .output)
         writeToPipe("clear|\n")
     }
 
     func send() {
         log.log("send (Return keystroke)", category: .output)
+        if !AXIsProcessTrusted() {
+            log.error("send: Accessibility not trusted — CGEvent posting will likely be blocked by macOS", category: .output)
+        }
         let src = CGEventSource(stateID: .hidSystemState)
         guard let down = CGEvent(keyboardEventSource: src, virtualKey: 0x24, keyDown: true),
               let up = CGEvent(keyboardEventSource: src, virtualKey: 0x24, keyDown: false) else {
-            log.error("send failed: could not create CGEvent — check Accessibility permissions", category: .output)
+            log.error("send failed: could not create CGEvent", category: .output)
             return
         }
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
+        log.log("send: Return keystroke posted", category: .output)
     }
 
     private func writeToPipe(_ message: String) {
@@ -50,6 +54,7 @@ final class ShellOutputManager: OutputManager {
             return
         }
         defer { Darwin.close(fd) }
+        var writeOk = true
         message.withCString { ptr in
             let total = strlen(ptr)
             var offset = 0
@@ -58,10 +63,14 @@ final class ShellOutputManager: OutputManager {
                 if n < 0 {
                     if errno == EINTR { continue }
                     log.error("writeToPipe failed: write error on \(pipePath) (errno \(errno), wrote \(offset)/\(total))", category: .output)
+                    writeOk = false
                     return
                 }
                 offset += n
             }
+        }
+        if writeOk {
+            log.log("writeToPipe: delivered \(message.count) bytes to \(pipePath)", category: .output)
         }
     }
 
@@ -72,21 +81,29 @@ final class ShellOutputManager: OutputManager {
         }
         let frontPID = frontApp.processIdentifier
         let appName = frontApp.localizedName ?? "unknown"
-        let result = findRegisteredShell(from: pid_t(frontPID), registryURL: registryURL)
-        if result == nil {
+        logger.log("session resolve: frontmost app=\(appName) PID=\(frontPID)", category: .output)
+        let result = findRegisteredShell(from: pid_t(frontPID), registryURL: registryURL, logger: logger)
+        if let pipe = result {
+            logger.log("session resolve: found pipe \(pipe)", category: .output)
+        } else {
             logger.error("session resolve: no registered shell under \(appName) (PID \(frontPID)), registry: \(registryURL.path())", category: .output)
         }
         return result
     }
 
-    private static func findRegisteredShell(from pid: pid_t, registryURL: URL) -> String? {
+    private static func findRegisteredShell(from pid: pid_t, registryURL: URL, logger: RuntimeLogger) -> String? {
         let sessionFile = registryURL.appending(path: "\(pid)")
         if let path = try? String(contentsOf: sessionFile, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
+            logger.log("session resolve: matched PID \(pid) → \(path)", category: .output)
             return path
         }
-        for child in childPIDs(of: pid) {
-            if let found = findRegisteredShell(from: child, registryURL: registryURL) {
+        let children = childPIDs(of: pid)
+        if !children.isEmpty {
+            logger.log("session resolve: PID \(pid) has children \(children)", category: .output)
+        }
+        for child in children {
+            if let found = findRegisteredShell(from: child, registryURL: registryURL, logger: logger) {
                 return found
             }
         }
