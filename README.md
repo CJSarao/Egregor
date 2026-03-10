@@ -9,7 +9,7 @@ Not a voice assistant. Not dictation software. A focused tool: voice goes in, te
 ## How It Works
 
 ```
-hold Right Option → speak → release → text appears in terminal
+hold Right Command → speak → release → text appears in terminal
 ```
 
 Egregore captures audio, runs it through WhisperKit (on-device speech recognition via Apple's Neural Engine), decides what to do with the result, and writes it into your shell's line editor over a named pipe. Your terminal never loses focus.

@@ -3,7 +3,7 @@ import Foundation
 
 // Right-side modifier key codes (macOS hardware constants).
 private let keyCodeRightShift:   UInt16 = 60
-private let keyCodeRightOption:  UInt16 = 61
+private let keyCodeRightCommand: UInt16 = 54
 private let keyCodeRightControl: UInt16 = 62
 
 // Hides NSEvent global monitors, modifier-key state tracking, and right-side
@@ -14,7 +14,7 @@ actor NSEventHotkeyManager: HotkeyManager {
     nonisolated let events: AsyncStream<HotkeyEvent>
 
     // Modifier state — only Right-side keys tracked.
-    private var rightOptionDown  = false
+    private var rightCommandDown = false
     private var rightShiftDown   = false
     private var rightControlDown = false
 
@@ -37,13 +37,13 @@ actor NSEventHotkeyManager: HotkeyManager {
 
     func processFlagsChanged(keyCode: UInt16, flags: NSEvent.ModifierFlags) {
         switch keyCode {
-        case keyCodeRightOption:
-            let isDown = flags.contains(.option)
-            if isDown && !rightOptionDown {
-                rightOptionDown = true
+        case keyCodeRightCommand:
+            let isDown = flags.contains(.command)
+            if isDown && !rightCommandDown {
+                rightCommandDown = true
                 outputContinuation.yield(.pttBegan)
-            } else if !isDown && rightOptionDown {
-                rightOptionDown = false
+            } else if !isDown && rightCommandDown {
+                rightCommandDown = false
                 let inputMode: InputMode = rightShiftDown ? .command : .dictation
                 outputContinuation.yield(.pttEnded(mode: inputMode))
             }

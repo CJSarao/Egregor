@@ -11,16 +11,16 @@ final class HotkeyManagerTests: XCTestCase {
         NSEventHotkeyManager(installMonitors: false)
     }
 
-    // Convenience: press Right Option (option flag set)
-    private func pressRightOption(_ sut: NSEventHotkeyManager) async {
-        await sut.processFlagsChanged(keyCode: 61, flags: .option)
+    // Convenience: press Right Command (command flag set)
+    private func pressRightCommand(_ sut: NSEventHotkeyManager) async {
+        await sut.processFlagsChanged(keyCode: 54, flags: .command)
     }
 
-    // Release Right Option (no option flag)
-    private func releaseRightOption(_ sut: NSEventHotkeyManager,
-                                    withShift: Bool = false) async {
+    // Release Right Command (no command flag)
+    private func releaseRightCommand(_ sut: NSEventHotkeyManager,
+                                     withShift: Bool = false) async {
         let flags: NSEvent.ModifierFlags = withShift ? [.shift] : []
-        await sut.processFlagsChanged(keyCode: 61, flags: flags)
+        await sut.processFlagsChanged(keyCode: 54, flags: flags)
     }
 
     private func pressRightShift(_ sut: NSEventHotkeyManager) async {
@@ -38,22 +38,22 @@ final class HotkeyManagerTests: XCTestCase {
 
     // MARK: - PTT begin
 
-    func testRightOptionPressEmitsPTTBegan() async {
+    func testRightCommandPressEmitsPTTBegan() async {
         let sut = makeSUT()
         var iter = sut.events.makeAsyncIterator()
 
-        await pressRightOption(sut)
+        await pressRightCommand(sut)
 
         let event = await iter.next()
         XCTAssertEqual(event, .pttBegan)
     }
 
-    func testRepeatedRightOptionPressOnlyEmitsOnePTTBegan() async {
+    func testRepeatedRightCommandPressOnlyEmitsOnePTTBegan() async {
         let sut = makeSUT()
         var iter = sut.events.makeAsyncIterator()
 
-        await pressRightOption(sut)
-        await pressRightOption(sut)   // already down — should be ignored
+        await pressRightCommand(sut)
+        await pressRightCommand(sut)   // already down — should be ignored
 
         // Only one pttBegan should be in the stream.
         var collected: [HotkeyEvent] = []
@@ -72,14 +72,14 @@ final class HotkeyManagerTests: XCTestCase {
 
     // MARK: - PTT end — dictation mode
 
-    func testRightOptionReleaseWithoutShiftEmitsDictationEnd() async {
+    func testRightCommandReleaseWithoutShiftEmitsDictationEnd() async {
         let sut = makeSUT()
         var iter = sut.events.makeAsyncIterator()
 
-        await pressRightOption(sut)
+        await pressRightCommand(sut)
         _ = await iter.next()   // consume pttBegan
 
-        await releaseRightOption(sut, withShift: false)
+        await releaseRightCommand(sut, withShift: false)
 
         let event = await iter.next()
         XCTAssertEqual(event, .pttEnded(mode: .dictation))
@@ -87,15 +87,15 @@ final class HotkeyManagerTests: XCTestCase {
 
     // MARK: - PTT end — command mode
 
-    func testRightShiftPluRightOptionEmitsCommandModeEnd() async {
+    func testRightShiftPlusRightCommandEmitsCommandModeEnd() async {
         let sut = makeSUT()
         var iter = sut.events.makeAsyncIterator()
 
         await pressRightShift(sut)
-        await pressRightOption(sut)
+        await pressRightCommand(sut)
         _ = await iter.next()   // consume pttBegan
 
-        await releaseRightOption(sut, withShift: true)
+        await releaseRightCommand(sut, withShift: true)
 
         let event = await iter.next()
         XCTAssertEqual(event, .pttEnded(mode: .command))
@@ -105,13 +105,13 @@ final class HotkeyManagerTests: XCTestCase {
         let sut = makeSUT()
         var iter = sut.events.makeAsyncIterator()
 
-        // Press shift, then option, then release shift before releasing option.
+        // Press shift, then command, then release shift before releasing command.
         await pressRightShift(sut)
-        await pressRightOption(sut)
+        await pressRightCommand(sut)
         _ = await iter.next()   // consume pttBegan
 
-        await releaseRightShift(sut)            // shift gone before option release
-        await releaseRightOption(sut, withShift: false)
+        await releaseRightShift(sut)             // shift gone before command release
+        await releaseRightCommand(sut, withShift: false)
 
         let event = await iter.next()
         XCTAssertEqual(event, .pttEnded(mode: .dictation))
@@ -188,8 +188,8 @@ final class HotkeyManagerTests: XCTestCase {
         let sut = makeSUT()
         var iter = sut.events.makeAsyncIterator()
 
-        await pressRightOption(sut)
-        await releaseRightOption(sut)
+        await pressRightCommand(sut)
+        await releaseRightCommand(sut)
 
         let first  = await iter.next()
         let second = await iter.next()
@@ -202,10 +202,10 @@ final class HotkeyManagerTests: XCTestCase {
         let sut = makeSUT()
         var iter = sut.events.makeAsyncIterator()
 
-        await pressRightOption(sut)
-        await releaseRightOption(sut)
-        await pressRightOption(sut)
-        await releaseRightOption(sut)
+        await pressRightCommand(sut)
+        await releaseRightCommand(sut)
+        await pressRightCommand(sut)
+        await releaseRightCommand(sut)
 
         let e1 = await iter.next()
         let e2 = await iter.next()

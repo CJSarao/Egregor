@@ -5,6 +5,14 @@
 
 ---
 
+## 0. Documentation Contract
+
+`specs.md` is the source of truth for product behavior and intended UX.
+`tasks.md` is a derived execution plan and must not permanently carry behavior that is absent from the spec.
+
+When implementation, tests, README text, or UI copy materially diverge from this document, they must be reconciled in the same change whenever possible.
+Tests are proof that the implementation satisfies the spec, not proof of accidental current behavior.
+
 ## 1. What It Is
 
 A macOS menu bar application that transcribes voice input and injects text into the active terminal's shell buffer. Productivity tool for hands-free terminal interaction — not a voice assistant, not an agent, not a dictation replacement for prose.
@@ -78,11 +86,14 @@ Only WhisperKit and KeyboardShortcuts are permitted as third-party dependencies.
 Two operational modes, toggled by a persistent hotkey.
 
 ### PTT (Push-to-Talk) — default
-- Hold PTT key → mic records → release → transcribe → append to terminal buffer immediately
-- Hold Command mode modifier + PTT key → record single utterance → release → parse as command only (no append)
+- Hold PTT key → mic records and HUD shows a live transcript for the current utterance
+- Release PTT key → finalize the utterance, hide the live transcript state, and inject the finalized text into the active terminal buffer
+- Hold Command mode modifier + PTT key → record single utterance with the same live HUD transcript, then on release parse as command only (no append)
 
 ### OPEN (Open Mic)
-- VAD runs continuously — every utterance transcribes and appends to terminal buffer automatically
+- VAD runs continuously while OPEN mode is active
+- During an utterance, the HUD shows a live transcript for immediate user feedback
+- When silence ends the utterance, finalize the transcript, hide the live transcript state, and inject the finalized text into the active terminal buffer
 - Isolated command words trigger command parsing (see isolation algorithm below)
 - Normal utterances append to terminal buffer — ABORT is the only way to clear
 
@@ -93,8 +104,8 @@ Dedicated hotkey switches between PTT and OPEN. State persists for the session. 
 
 | Action | Key | Mechanism |
 |---|---|---|
-| PTT record | `Right Option (⌥)` hold | `NSEvent flagsChanged` |
-| PTT command mode | `Right Shift + Right Option` hold | `NSEvent flagsChanged` |
+| PTT record | `Right Command (⌘)` hold | `NSEvent flagsChanged` |
+| PTT command mode | `Right Shift + Right Command` hold | `NSEvent flagsChanged` |
 | Mode toggle (PTT ↔ OPEN) | `Right Control (^)` tap | `KeyboardShortcuts` |
 
 All defaults use right-side modifier keys only. No conflicts with terminal control sequences, common IDE shortcuts, or macOS system shortcuts. Comfortable to reach without looking — suitable for treadmill use.
@@ -185,7 +196,12 @@ Hides: NSEvent global monitors, modifier key tracking, KeyboardShortcuts integra
 
 ```swift
 protocol Transcriber {
+    var partialResults: AsyncStream<PartialTranscription> { get }
     func transcribe(_ segment: SpeechSegment) async -> TranscriptionResult
+}
+
+struct PartialTranscription {
+    let text: String
 }
 
 struct TranscriptionResult {
@@ -195,7 +211,7 @@ struct TranscriptionResult {
 }
 ```
 
-Hides: WhisperKit initialization, model loading, Core ML scheduling, lazy warmup, model path resolution. One function in, one result out.
+Hides: WhisperKit initialization, model loading, Core ML scheduling, lazy warmup, model path resolution, and partial-result delivery. Callers consume a live partial transcript stream during capture and a single final result when an utterance completes.
 
 ---
 
@@ -279,12 +295,16 @@ The only module that knows all others. It translates runtime events into output 
 Pure observer of `SessionController` state. No interface — subscribes to published state:
 
 ```
-.recording    → show live partial transcription text
+.recording    → show live partial transcription text for the current utterance
 .transcribing → show activity indicator
 .injected     → fade out (text now in terminal)
 .cleared      → dismiss immediately
 .idle         → hidden
 ```
+
+The HUD behavior must be consistent across PTT and OPEN mode. The only difference between modes is what ends the utterance:
+- PTT: key release
+- OPEN: silence detection
 
 Floating `NSWindow`, level `.floating`, `canBecomeKey = false`, click-through. Never steals focus from target application.
 
@@ -368,6 +388,7 @@ Tests are **proof that the implementation satisfies the spec**. They are the pri
 **End-to-end tests** for the pipeline (no hardware required — all inputs mocked):
 
 - Synthesized `SpeechSegment` with known audio → `Transcriber` → expected text output
+- Partial transcript stream for an active utterance → HUD state reflects incrementally updated text
 - Known `TranscriptionResult` with timing metadata → `IntentResolver` → expected `Intent` for all cases
 - `Intent` sequence → `OutputManager` (mock shell) → expected pipe writes in correct order and format
 - Full pipeline: mock `AudioPipeline` emitting known segments → expected shell pipe output
@@ -407,6 +428,6 @@ Each milestone is independently verifiable. Milestones 1–3 require no hardware
 | 3 | Feed mock `TranscriptionResult` into `IntentResolver`, verify correct `Intent` for all branches | Property-based test suite |
 | 4 | `AVAudioEngine` tap running, `SpeechSegment` emitted correctly on real speech with VAD silence detection | Mic required |
 | 5 | PTT full path: hold key → speak → release → text appears in terminal buffer | Hardware E2E |
-| 6 | OPEN mode: isolated ROGER/ABORT route to commands, normal speech injects | Hardware E2E |
-| 7 | HUD: appears on record, updates during transcription, dismisses correctly for all exit paths | Visual verification |
+| 6 | OPEN mode: isolated ROGER/ABORT route to commands, normal speech injects after silence finalization | Hardware E2E |
+| 7 | HUD: appears on record, shows live transcript text during capture, and dismisses correctly for all exit paths | Visual verification |
 | 8 | Shell integration installer: prompt, snippet written to `.zshrc`, registry operational across multiple sessions | Integration test |

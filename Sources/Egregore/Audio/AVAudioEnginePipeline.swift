@@ -139,10 +139,19 @@ actor AVAudioEnginePipeline: AudioPipeline {
         { callback in
             let engine = AVAudioEngine()
             let input  = engine.inputNode
-            let format = AVAudioFormat(standardFormatWithSampleRate: outputSampleRate, channels: 1)!
-            input.installTap(onBus: 0, bufferSize: 512, format: format) { buffer, _ in
-                guard let data = buffer.floatChannelData else { return }
-                let samples = Array(UnsafeBufferPointer(start: data[0], count: Int(buffer.frameLength)))
+            let sourceFormat = input.inputFormat(forBus: 0)
+            let targetFormat = AVAudioFormat(standardFormatWithSampleRate: outputSampleRate, channels: 1)!
+            let converter = AVAudioConverter(from: sourceFormat, to: targetFormat)
+
+            // Input-node taps must match the hardware format. Resample to the app's
+            // fixed 16 kHz mono Float32 contract after capture.
+            input.installTap(onBus: 0, bufferSize: 1024, format: sourceFormat) { buffer, _ in
+                guard let converted = convert(buffer,
+                                              from: sourceFormat,
+                                              to: targetFormat,
+                                              using: converter),
+                      let data = converted.floatChannelData else { return }
+                let samples = Array(UnsafeBufferPointer(start: data[0], count: Int(converted.frameLength)))
                 callback(samples)
             }
             return TapHandle(
@@ -150,5 +159,36 @@ actor AVAudioEnginePipeline: AudioPipeline {
                 stop:  { engine.stop(); input.removeTap(onBus: 0) }
             )
         }
+    }
+
+    private nonisolated static func convert(
+        _ buffer: AVAudioPCMBuffer,
+        from sourceFormat: AVAudioFormat,
+        to targetFormat: AVAudioFormat,
+        using converter: AVAudioConverter?
+    ) -> AVAudioPCMBuffer? {
+        guard let converter else { return nil }
+
+        let ratio = targetFormat.sampleRate / sourceFormat.sampleRate
+        let outputCapacity = max(1, Int(ceil(Double(buffer.frameLength) * ratio)))
+        guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat,
+                                                  frameCapacity: AVAudioFrameCount(outputCapacity)) else {
+            return nil
+        }
+
+        var error: NSError?
+        var consumed = false
+        let status = converter.convert(to: outputBuffer, error: &error) { _, outStatus in
+            if consumed {
+                outStatus.pointee = .endOfStream
+                return nil
+            }
+            consumed = true
+            outStatus.pointee = .haveData
+            return buffer
+        }
+
+        guard status == .haveData || status == .endOfStream, error == nil else { return nil }
+        return outputBuffer.frameLength > 0 ? outputBuffer : nil
     }
 }

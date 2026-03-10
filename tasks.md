@@ -97,3 +97,44 @@
   - End-to-end tests exercise transcriber, resolver, output formatting, and full mocked pipeline flows without requiring audio hardware
   - The suite names or groups tests by spec feature so passing results can be traced back to the required behaviors and milestones
 - verify: swift test
+
+## Task 11
+- desc: Add persistent runtime logging and debug surfaces so hotkeys, audio capture, transcription, intent resolution, and terminal output failures are diagnosable on a real desktop session
+- deps: none
+- passes: false
+- ac:
+  - The app writes timestamped logs for the main execution path to a user-owned file under Egregore's local app data
+  - Failures that currently no-op silently, especially shell session lookup and pipe writes, emit explicit error logs with enough context to debug the failing step
+  - The menu bar UI exposes the active log location or a direct way to inspect recent diagnostics during manual testing
+- verify: swift test && manual check that launching the app produces a readable log file and records a mode toggle plus an OPEN-mode utterance attempt
+
+## Task 12
+- desc: Make terminal injection and command dispatch observable and reliable against a real zsh session after shell integration install
+- deps: Task 11
+- passes: false
+- ac:
+  - OPEN-mode and PTT final transcriptions either append to the active terminal buffer or emit logs showing exactly where resolution failed
+  - Session discovery logs include the frontmost app PID, shell PID traversal, and session file or pipe outcome without exposing implementation details to callers
+  - ROGER and ABORT attempts log whether the app executed send or clear and whether desktop permissions may block the action
+- verify: manual check in a fresh zsh terminal after installing the managed snippet, with logs confirming append and clear paths
+
+## Task 13
+- desc: Replace brittle fixed hotkey assumptions with a user-appropriate input scheme and visible configuration state for treadmill use
+- deps: Task 11
+- passes: false
+- ac:
+  - The default PTT and mode-toggle bindings work on common external keyboards, including Windows-layout Mac keyboards that lack a distinct right option
+  - The menu bar UI shows the current bindings in user-facing language instead of hardcoded stale text
+  - Manual testing can confirm which physical key events the app is receiving when a binding does not behave as expected
+- verify: swift test --filter HotkeyManagerTests && manual check that the configured PTT and OPEN toggle bindings register on the target keyboard
+
+## Task 14
+- desc: Implement real-time speech-to-text feedback so both PTT and OPEN mode show a live transcript in the HUD during capture and inject the finalized text when the utterance ends
+- deps: Task 11, Task 12
+- passes: false
+- ac:
+  - While an utterance is actively being captured, the HUD shows incrementally updated transcript text with low enough latency to provide immediate user feedback
+  - In PTT mode, releasing the key finalizes the current utterance, dismisses the HUD transcript state, and injects the finalized text into the focused terminal session
+  - In OPEN mode, a completed utterance detected by silence finalizes the current utterance, dismisses the HUD transcript state, and injects the finalized text into the focused terminal session
+  - The live transcript behavior is implemented consistently across PTT and OPEN mode, with only the utterance-finalization trigger differing between modes
+- verify: swift test --filter HUDStateTests && manual check of one PTT utterance and one OPEN-mode utterance from live HUD transcript through final terminal injection
