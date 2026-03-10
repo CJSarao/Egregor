@@ -62,7 +62,7 @@ final class ShellOutputManager: OutputManager {
     private func writeToPipe(action: String, text: String) {
         let message = "\(action)|\(text)\n"
         log.log(
-            "writeToPipe: action=\(action) textBytes=\(text.utf8.count) payloadBytes=\(message.utf8.count) preview=\"\(preview(text))\"",
+            "writeToPipe: action=\(action) textBytes=\(text.utf8.count) payloadBytes=\(message.utf8.count)",
             category: .output
         )
         guard let target = sessionResolver() else {
@@ -171,15 +171,6 @@ final class ShellOutputManager: OutputManager {
         var procs = [kinfo_proc](repeating: kinfo_proc(), count: count)
         sysctl(&mib, 4, &procs, &size, nil, 0)
         return procs.filter { $0.kp_eproc.e_ppid == parentPID }.map { $0.kp_proc.p_pid }
-    }
-
-    private func preview(_ text: String) -> String {
-        let escaped = text
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\n", with: "\\n")
-            .replacingOccurrences(of: "\r", with: "\\r")
-        if escaped.count <= 80 { return escaped }
-        return String(escaped.prefix(77)) + "..."
     }
 
     private static func describe(_ pid: pid_t?) -> String {

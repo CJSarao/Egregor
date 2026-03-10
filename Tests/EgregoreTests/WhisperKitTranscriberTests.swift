@@ -8,6 +8,24 @@ private actor Counter {
 }
 
 final class WhisperKitTranscriberTests: XCTestCase {
+    private var logDir: URL!
+    private var logFile: URL!
+
+    private func readLog() -> String {
+        (try? String(contentsOf: logFile, encoding: .utf8)) ?? ""
+    }
+
+    override func setUp() {
+        super.setUp()
+        logDir = FileManager.default.temporaryDirectory
+            .appending(path: "egregore-transcriber-logs-\(UUID().uuidString)")
+        logFile = logDir.appending(path: "egregore.log")
+    }
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(at: logDir)
+        super.tearDown()
+    }
 
     // MARK: - confidence(from:)
 
@@ -93,13 +111,17 @@ final class WhisperKitTranscriberTests: XCTestCase {
 
     func testPartialTranscribeReturnsTrimmedText() async {
         let snapshot = SpeechCaptureSnapshot(audio: [0.1, 0.2], duration: .milliseconds(300))
+        let logger = RuntimeLogger(fileURL: logFile)
         let transcriber = WhisperKitTranscriber(engineProvider: {
             { _, _ in ("  partial text  ", [0.0]) }
-        })
+        }, logger: logger)
 
         let result = await transcriber.transcribePartial(snapshot)
 
         XCTAssertEqual(result, "partial text")
+        let contents = readLog()
+        XCTAssertTrue(contents.contains("chars=12"))
+        XCTAssertFalse(contents.contains("partial text"))
     }
 
     func testTranscribeCarriesSegmentMetadata() async {

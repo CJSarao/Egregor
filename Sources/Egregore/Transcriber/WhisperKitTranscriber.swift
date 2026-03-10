@@ -39,7 +39,7 @@ actor WhisperKitTranscriber: Transcriber {
             let (text, _) = try await run(snapshot.audio) { _ in }
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
-                log.log("partial transcription: duration=\(snapshot.duration) text=\"\(trimmed)\"", category: .transcriber)
+                log.log("partial transcription: duration=\(snapshot.duration) chars=\(trimmed.count)", category: .transcriber)
             }
             return trimmed
         } catch {

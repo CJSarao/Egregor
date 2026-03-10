@@ -104,7 +104,7 @@ actor SessionController {
             cancelPartialTask()
             partialTask = Task {
                 let text = await self.transcriber.transcribePartial(snapshot)
-                self.applyPartialTranscript(text, sequence: sequence, mode: mode)
+                await self.applyPartialTranscript(text, sequence: sequence, mode: mode)
             }
         }
     }
@@ -118,7 +118,7 @@ actor SessionController {
             log.log("segment received: duration=\(segment.duration), silenceBefore=\(segment.silenceBefore), mode=\(mode)", category: .session)
             hudContinuation.yield(.transcribing)
             let result = await transcriber.transcribe(segment)
-            log.log("transcription: \"\(result.text)\" confidence=\(result.confidence)", category: .session)
+            log.log("transcription: chars=\(result.text.count) confidence=\(result.confidence)", category: .session)
             let intent = resolver.resolve(result, mode: mode)
             log.log("resolved intent: \(intent)", category: .session)
             dispatch(intent, result: result)
@@ -130,7 +130,7 @@ actor SessionController {
         }
     }
 
-    private func applyPartialTranscript(_ text: String, sequence: Int, mode: OperatingMode) {
+    private func applyPartialTranscript(_ text: String, sequence: Int, mode: OperatingMode) async {
         guard isRecording, sequence == partialSequence, !text.isEmpty else { return }
         hudContinuation.yield(.recording(mode: mode, partialText: text))
     }
@@ -138,7 +138,7 @@ actor SessionController {
     private func dispatch(_ intent: Intent, result: TranscriptionResult) {
         switch intent {
         case .inject(let text):
-            log.log("dispatch: inject \"\(text)\"", category: .session)
+            log.log("dispatch: inject chars=\(text.count)", category: .session)
             output.append(text)
             log.log("dispatch: append handed to output manager", category: .session)
             hudContinuation.yield(.injected(text))
@@ -151,7 +151,7 @@ actor SessionController {
             output.clear()
             hudContinuation.yield(.cleared)
         case .discard:
-            log.log("dispatch: discard — text=\"\(result.text)\" confidence=\(result.confidence)", category: .session)
+            log.log("dispatch: discard chars=\(result.text.count) confidence=\(result.confidence)", category: .session)
             hudContinuation.yield(.idle)
         }
     }

@@ -153,4 +153,18 @@ final class OutputManagerTests: XCTestCase {
         XCTAssertTrue(contents.contains("resolved pipe missing at \(missingPath)"))
         XCTAssertTrue(contents.contains("action=inject"))
     }
+
+    func testAppendLogDoesNotContainRawText() {
+        let (path, fd) = makePipe()
+        defer { Darwin.close(fd); Darwin.unlink(path) }
+
+        let logger = RuntimeLogger(fileURL: logFile)
+        let manager = ShellOutputManager(sessionResolver: { path }, logger: logger)
+
+        manager.append("secret-token")
+
+        let contents = readLog()
+        XCTAssertTrue(contents.contains("textBytes=12"))
+        XCTAssertFalse(contents.contains("secret-token"))
+    }
 }
