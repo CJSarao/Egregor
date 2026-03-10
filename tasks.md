@@ -101,7 +101,7 @@
 ## Task 11
 - desc: Add persistent runtime logging and debug surfaces so hotkeys, audio capture, transcription, intent resolution, and terminal output failures are diagnosable on a real desktop session
 - deps: none
-- passes: false
+- passes: true
 - ac:
   - The app writes timestamped logs for the main execution path to a user-owned file under Egregore's local app data
   - Failures that currently no-op silently, especially shell session lookup and pipe writes, emit explicit error logs with enough context to debug the failing step

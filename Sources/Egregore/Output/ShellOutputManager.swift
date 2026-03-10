@@ -4,40 +4,79 @@ import Darwin
 
 final class ShellOutputManager: OutputManager {
     private let sessionResolver: () -> String?
+    private let log: RuntimeLogger
 
-    init(registryURL: URL = URL.homeDirectory.appending(path: ".config/egregore/sessions")) {
-        self.sessionResolver = { ShellOutputManager.resolveSession(registryURL: registryURL) }
+    init(registryURL: URL = URL.homeDirectory.appending(path: ".config/egregore/sessions"),
+         logger: RuntimeLogger = .shared) {
+        self.log = logger
+        self.sessionResolver = { ShellOutputManager.resolveSession(registryURL: registryURL, logger: logger) }
     }
 
-    init(sessionResolver: @escaping () -> String?) {
+    init(sessionResolver: @escaping () -> String?, logger: RuntimeLogger = .shared) {
         self.sessionResolver = sessionResolver
+        self.log = logger
     }
 
     func append(_ text: String) {
+        log.log("append: \(text.count) chars", category: .output)
         writeToPipe("inject|\(text)\n")
     }
 
     func clear() {
+        log.log("clear", category: .output)
         writeToPipe("clear|\n")
     }
 
     func send() {
+        log.log("send (Return keystroke)", category: .output)
         let src = CGEventSource(stateID: .hidSystemState)
-        CGEvent(keyboardEventSource: src, virtualKey: 0x24, keyDown: true)?.post(tap: .cghidEventTap)
-        CGEvent(keyboardEventSource: src, virtualKey: 0x24, keyDown: false)?.post(tap: .cghidEventTap)
+        guard let down = CGEvent(keyboardEventSource: src, virtualKey: 0x24, keyDown: true),
+              let up = CGEvent(keyboardEventSource: src, virtualKey: 0x24, keyDown: false) else {
+            log.error("send failed: could not create CGEvent — check Accessibility permissions", category: .output)
+            return
+        }
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
     }
 
     private func writeToPipe(_ message: String) {
-        guard let pipePath = sessionResolver() else { return }
+        guard let pipePath = sessionResolver() else {
+            log.error("writeToPipe failed: no registered shell session found", category: .output)
+            return
+        }
         let fd = Darwin.open(pipePath, O_WRONLY | O_NONBLOCK)
-        guard fd >= 0 else { return }
+        guard fd >= 0 else {
+            log.error("writeToPipe failed: could not open pipe at \(pipePath) (errno \(errno))", category: .output)
+            return
+        }
         defer { Darwin.close(fd) }
-        _ = message.withCString { Darwin.write(fd, $0, strlen($0)) }
+        message.withCString { ptr in
+            let total = strlen(ptr)
+            var offset = 0
+            while offset < total {
+                let n = Darwin.write(fd, ptr + offset, total - offset)
+                if n < 0 {
+                    if errno == EINTR { continue }
+                    log.error("writeToPipe failed: write error on \(pipePath) (errno \(errno), wrote \(offset)/\(total))", category: .output)
+                    return
+                }
+                offset += n
+            }
+        }
     }
 
-    private static func resolveSession(registryURL: URL) -> String? {
-        guard let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return nil }
-        return findRegisteredShell(from: pid_t(frontPID), registryURL: registryURL)
+    private static func resolveSession(registryURL: URL, logger: RuntimeLogger) -> String? {
+        guard let frontApp = NSWorkspace.shared.frontmostApplication else {
+            logger.error("session resolve: no frontmost application", category: .output)
+            return nil
+        }
+        let frontPID = frontApp.processIdentifier
+        let appName = frontApp.localizedName ?? "unknown"
+        let result = findRegisteredShell(from: pid_t(frontPID), registryURL: registryURL)
+        if result == nil {
+            logger.error("session resolve: no registered shell under \(appName) (PID \(frontPID)), registry: \(registryURL.path())", category: .output)
+        }
+        return result
     }
 
     private static func findRegisteredShell(from pid: pid_t, registryURL: URL) -> String? {

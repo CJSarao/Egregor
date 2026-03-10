@@ -11,22 +11,25 @@ actor WhisperKitTranscriber: Transcriber {
     private let engineProvider: @Sendable () async throws -> @Sendable ([Float]) async throws -> (text: String, avgLogprobs: [Float])
     private var engine: (@Sendable ([Float]) async throws -> (text: String, avgLogprobs: [Float]))?
     private let progressHandler: ((Double) -> Void)?
+    private let log: RuntimeLogger
 
-    init(progressHandler: ((Double) -> Void)? = nil) {
+    init(progressHandler: ((Double) -> Void)? = nil, logger: RuntimeLogger = .shared) {
         self.progressHandler = progressHandler
+        self.log = logger
         let ph = progressHandler
         self.engineProvider = {
             try await WhisperKitTranscriber.makeEngine(progressHandler: ph)
         }
     }
 
-    // Testability — inject a stub engine factory
     init(
         engineProvider: @escaping @Sendable () async throws -> @Sendable ([Float]) async throws -> (text: String, avgLogprobs: [Float]),
-        progressHandler: ((Double) -> Void)? = nil
+        progressHandler: ((Double) -> Void)? = nil,
+        logger: RuntimeLogger = .shared
     ) {
         self.engineProvider = engineProvider
         self.progressHandler = progressHandler
+        self.log = logger
     }
 
     func transcribe(_ segment: SpeechSegment) async -> TranscriptionResult {
@@ -34,17 +37,21 @@ actor WhisperKitTranscriber: Transcriber {
             let run = try await loadedEngine()
             let (text, avgLogprobs) = try await run(segment.audio)
             let confidence = Self.confidence(from: avgLogprobs)
+            log.log("transcribed \(segment.audio.count) samples → \(text.count) chars (confidence \(confidence))", category: .transcriber)
             return TranscriptionResult(text: text.trimmingCharacters(in: .whitespacesAndNewlines),
                                        confidence: confidence,
                                        segment: segment)
         } catch {
+            log.error("transcription failed: \(error)", category: .transcriber)
             return TranscriptionResult(text: "", confidence: 0, segment: segment)
         }
     }
 
     private func loadedEngine() async throws -> @Sendable ([Float]) async throws -> (text: String, avgLogprobs: [Float]) {
         if let engine { return engine }
+        log.log("loading WhisperKit engine (model: \(Self.modelVariant))", category: .transcriber)
         let e = try await engineProvider()
+        log.log("WhisperKit engine loaded", category: .transcriber)
         engine = e
         return e
     }

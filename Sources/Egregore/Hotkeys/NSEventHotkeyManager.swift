@@ -41,10 +41,12 @@ actor NSEventHotkeyManager: HotkeyManager {
             let isDown = flags.contains(.command)
             if isDown && !rightCommandDown {
                 rightCommandDown = true
+                RuntimeLogger.shared.log("Right Command down → pttBegan", category: .hotkey)
                 outputContinuation.yield(.pttBegan)
             } else if !isDown && rightCommandDown {
                 rightCommandDown = false
                 let inputMode: InputMode = rightShiftDown ? .command : .dictation
+                RuntimeLogger.shared.log("Right Command up → pttEnded(\(inputMode))", category: .hotkey)
                 outputContinuation.yield(.pttEnded(mode: inputMode))
             }
 
@@ -55,6 +57,7 @@ actor NSEventHotkeyManager: HotkeyManager {
             let isDown = flags.contains(.control)
             if isDown && !rightControlDown {
                 rightControlDown = true
+                RuntimeLogger.shared.log("Right Control tap → modeToggled", category: .hotkey)
                 outputContinuation.yield(.modeToggled)
             } else if !isDown {
                 rightControlDown = false

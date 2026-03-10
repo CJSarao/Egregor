@@ -57,6 +57,7 @@ final class AppRuntime: ObservableObject {
         self.hudController = HUDWindowController(hudStates: controller.hudStates)
         refreshStatus()
         hudController.show()
+        RuntimeLogger.shared.log("Egregore started — mic: \(microphoneStatus.rawValue), accessibility: \(accessibilityTrusted), shell: \(shellIntegrationInstalled)")
         Task { await controller.start() }
     }
 

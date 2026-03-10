@@ -63,6 +63,14 @@ struct MenuBarView: View {
                 .font(.system(size: 11))
                 .fixedSize(horizontal: false, vertical: true)
 
+            Button("Open Log File") {
+                NSWorkspace.shared.open(RuntimeLogger.logFileURL)
+            }
+            Text(RuntimeLogger.logFileURL.path(percentEncoded: false))
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+
             Button("Quit Egregore") {
                 NSApplication.shared.terminate(nil)
             }

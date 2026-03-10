@@ -8,6 +8,7 @@ actor SessionController {
     private let transcriber: any Transcriber
     private let resolver: any IntentResolver
     private let output: any OutputManager
+    private let log: RuntimeLogger
 
     private(set) var operatingMode: OperatingMode = .ptt
     private var pendingInputMode: InputMode?
@@ -20,13 +21,15 @@ actor SessionController {
         pipeline: any AudioPipeline,
         transcriber: any Transcriber,
         resolver: any IntentResolver,
-        output: any OutputManager
+        output: any OutputManager,
+        logger: RuntimeLogger = .shared
     ) {
         self.hotkeys = hotkeys
         self.pipeline = pipeline
         self.transcriber = transcriber
         self.resolver = resolver
         self.output = output
+        self.log = logger
 
         var cont: AsyncStream<HUDState>.Continuation!
         hudStates = AsyncStream { cont = $0 }
@@ -45,13 +48,20 @@ actor SessionController {
     }
 
     private func handle(_ event: HotkeyEvent) async {
+        log.log("hotkey event: \(event)", category: .session)
         switch event {
         case .pttBegan:
-            guard operatingMode == .ptt else { return }
+            guard operatingMode == .ptt else {
+                log.log("pttBegan ignored (OPEN mode active)", category: .session)
+                return
+            }
             hudContinuation.yield(.recording(mode: .ptt))
             await pipeline.start()
         case .pttEnded(let mode):
-            guard operatingMode == .ptt else { return }
+            guard operatingMode == .ptt else {
+                log.log("pttEnded ignored (OPEN mode active)", category: .session)
+                return
+            }
             pendingInputMode = mode
             await pipeline.forceEnd()
             await pipeline.stop()
@@ -64,10 +74,12 @@ actor SessionController {
         switch operatingMode {
         case .ptt:
             operatingMode = .open
+            log.log("mode toggled: PTT → OPEN", category: .session)
             hudContinuation.yield(.recording(mode: .open))
             await pipeline.start()
         case .open:
             operatingMode = .ptt
+            log.log("mode toggled: OPEN → PTT", category: .session)
             hudContinuation.yield(.idle)
             await pipeline.stop()
         }
@@ -77,9 +89,12 @@ actor SessionController {
         for await segment in pipeline.segments {
             let mode = pendingInputMode ?? .dictation
             pendingInputMode = nil
+            log.log("segment received: duration=\(segment.duration), silenceBefore=\(segment.silenceBefore), mode=\(mode)", category: .session)
             hudContinuation.yield(.transcribing)
             let result = await transcriber.transcribe(segment)
+            log.log("transcription: \"\(result.text)\" confidence=\(result.confidence)", category: .session)
             let intent = resolver.resolve(result, mode: mode)
+            log.log("resolved intent: \(intent)", category: .session)
             dispatch(intent)
         }
     }
@@ -90,12 +105,15 @@ actor SessionController {
             output.append(text)
             hudContinuation.yield(.injected(text))
         case .command(.roger):
+            log.log("dispatch: ROGER → send", category: .session)
             output.send()
             hudContinuation.yield(.injected("⏎"))
         case .command(.abort):
+            log.log("dispatch: ABORT → clear", category: .session)
             output.clear()
             hudContinuation.yield(.cleared)
         case .discard:
+            log.log("dispatch: discard → no-op", category: .session)
             hudContinuation.yield(.idle)
         }
     }
