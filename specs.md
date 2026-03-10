@@ -70,7 +70,7 @@ For any significant abstraction, consider at least two approaches before committ
 | UI | SwiftUI `MenuBarExtra` | No Dock icon |
 | Audio capture | `AVFoundation` (`AVAudioEngine`) | Graph-based, installable tap |
 | Transcription | WhisperKit (`argmaxinc/whisperkit-coreml`) | Core ML, Apple Neural Engine |
-| Model | `openai_whisper-large-v3-turbo` | Best latency/accuracy tradeoff |
+| Model | `openai_whisper-large-v3_turbo` | Best latency/accuracy tradeoff |
 | Model storage | `~/.local/share/egregore/models/` | User-owned, inspectable |
 | Hotkeys | `KeyboardShortcuts` (sindresorhus) | Wraps NSEvent global monitors |
 | Shell integration | ZLE fd watcher (zsh) | Terminal-agnostic, shell-level |
@@ -150,15 +150,21 @@ All thresholds are compile-time constants inside `IntentResolver`. Not exposed t
 
 ```swift
 protocol AudioPipeline {
-    func start()
-    func stop()
-    func forceEnd()  // PTT release — terminates segment regardless of VAD state
+    func start() async
+    func stop() async
+    func forceEnd() async  // PTT release — terminates segment regardless of VAD state
     var segments: AsyncStream<SpeechSegment> { get }
+    var captureSnapshots: AsyncStream<SpeechCaptureSnapshot> { get }
 }
 
 struct SpeechSegment {
     let audio: [Float]           // 16kHz mono Float32
     let silenceBefore: Duration  // elapsed since last segment ended
+    let duration: Duration
+}
+
+struct SpeechCaptureSnapshot {
+    let audio: [Float]           // in-progress utterance audio
     let duration: Duration
 }
 ```
@@ -196,12 +202,8 @@ Hides: NSEvent global monitors, modifier key tracking, KeyboardShortcuts integra
 
 ```swift
 protocol Transcriber {
-    var partialResults: AsyncStream<PartialTranscription> { get }
+    func transcribePartial(_ snapshot: SpeechCaptureSnapshot) async -> String
     func transcribe(_ segment: SpeechSegment) async -> TranscriptionResult
-}
-
-struct PartialTranscription {
-    let text: String
 }
 
 struct TranscriptionResult {
@@ -211,7 +213,7 @@ struct TranscriptionResult {
 }
 ```
 
-Hides: WhisperKit initialization, model loading, Core ML scheduling, lazy warmup, model path resolution, and partial-result delivery. Callers consume a live partial transcript stream during capture and a single final result when an utterance completes.
+Hides: WhisperKit initialization, model loading, Core ML scheduling, lazy warmup, model path resolution, and snapshot decoding. Callers submit in-progress capture snapshots for live HUD transcript updates and receive a single final result when an utterance completes.
 
 ---
 
@@ -253,6 +255,8 @@ Hides: session registry lookup, process tree walking, pipe path resolution, ZLE 
 `SessionController` always sequences these operations. They are never chained inside `OutputManager`.
 
 Each `append` call concatenates to the existing ZLE buffer (space-separated). `clear` resets to empty. This is the only mutation model — there is no replace operation.
+
+When session discovery or pipe delivery fails, `OutputManager` must emit explicit diagnostics identifying the frontmost app, matched shell PID ancestry, resolved pipe path, and whether the failure was lookup, stale registry, open, or write.
 
 ---
 
@@ -322,22 +326,53 @@ ZLE file descriptor watcher. Terminal-emulator agnostic — works in Ghostty, Te
 # Egregore integration — managed by Egregore.app
 VOICE_PIPE="/tmp/egregore-$$.pipe"
 VOICE_REGISTRY="$HOME/.config/egregore/sessions"
+VOICE_DEBUG="${EGREGORE_SHELL_DEBUG:-0}"
+VOICE_DEBUG_LOG="${EGREGORE_SHELL_DEBUG_LOG:-$HOME/.local/share/egregore/logs/shell-integration.log}"
+
+_egregore_debug() {
+    [[ "$VOICE_DEBUG" == "1" ]] || return 0
+    mkdir -p "${VOICE_DEBUG_LOG:h}"
+    print -r -- "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] [shell] $1" >> "$VOICE_DEBUG_LOG"
+}
 
 mkfifo "$VOICE_PIPE" 2>/dev/null
 exec {VOICE_FD}<>"$VOICE_PIPE"
 mkdir -p "$VOICE_REGISTRY"
 echo "$VOICE_PIPE" > "$VOICE_REGISTRY/$$"
 trap "rm -f '$VOICE_REGISTRY/$$' '$VOICE_PIPE'" EXIT
+typeset -g EGREGORE_PENDING_ACTION=""
+typeset -g EGREGORE_PENDING_TEXT=""
+_egregore_debug "registered pid=$$ pipe=$VOICE_PIPE registry=$VOICE_REGISTRY fd=$VOICE_FD"
 
-_egregore_inject() {
-    local action text
-    IFS='|' read -r action text <&$VOICE_FD
-    case $action in
-        inject) BUFFER="${BUFFER:+$BUFFER }$text"; CURSOR=${#BUFFER}; zle redisplay ;;
-        clear)  BUFFER=""; CURSOR=0; zle redisplay ;;
+_egregore_apply_pending() {
+    case $EGREGORE_PENDING_ACTION in
+        inject)
+            BUFFER="${BUFFER:+$BUFFER }$EGREGORE_PENDING_TEXT"
+            CURSOR=${#BUFFER}
+            zle -R
+            _egregore_debug "inject applied after_len=${#BUFFER} after_buffer<<<$BUFFER>>> after_cursor=$CURSOR"
+            ;;
+        clear)
+            BUFFER=""
+            CURSOR=0
+            zle -R
+            _egregore_debug "clear applied after_len=${#BUFFER} after_buffer<<<$BUFFER>>> after_cursor=$CURSOR"
+            ;;
     esac
 }
 
+_egregore_inject() {
+    local action text
+    local before_buffer="$BUFFER"
+    local before_cursor="$CURSOR"
+    _egregore_debug "handler entry fd=$VOICE_FD before_len=${#before_buffer} before_buffer<<<$before_buffer>>> before_cursor=$before_cursor"
+    IFS='|' read -r action text <&$VOICE_FD || return 1
+    EGREGORE_PENDING_ACTION="$action"
+    EGREGORE_PENDING_TEXT="$text"
+    zle _egregore_apply_pending
+}
+
+zle -N _egregore_apply_pending
 zle -N _egregore_inject
 zle -F $VOICE_FD _egregore_inject
 # End Egregore integration
@@ -354,6 +389,8 @@ zle -F $VOICE_FD _egregore_inject
 
 App presents a one-time "Install Shell Integration" prompt on first launch. Appends the snippet to `~/.zshrc` with explicit confirmation. Displays exactly what will be written and where. Uninstall: remove the marked block from `~/.zshrc` and delete `~/.config/egregore/`.
 
+When `EGREGORE_SHELL_DEBUG=1`, the shell snippet may write handler diagnostics to `EGREGORE_SHELL_DEBUG_LOG` for manual debugging and PTY-backed integration tests.
+
 ---
 
 ## 10. Model
@@ -361,7 +398,7 @@ App presents a one-time "Install Shell Integration" prompt on first launch. Appe
 | Property | Value |
 |---|---|
 | Format | Core ML (`.mlmodelc`) — not GGML |
-| Model | `openai_whisper-large-v3-turbo` |
+| Model | `openai_whisper-large-v3_turbo` |
 | Source | `argmaxinc/whisperkit-coreml` on HuggingFace |
 | Storage | `~/.local/share/egregore/models/` |
 | Init | Lazy — loads on first transcription, not app launch |
@@ -384,6 +421,8 @@ Tests are **proof that the implementation satisfies the spec**. They are the pri
 - `IntentResolver`: for any transcription with confidence below threshold, `resolve()` always returns `.discard`
 - `OutputManager` (mocked pipe): any sequence of `append` calls followed by `clear` always results in empty buffer regardless of text content, length, or unicode composition
 - `OutputManager` (mocked pipe): multiple `append` calls always produce space-separated concatenation in pipe write order
+- Interactive zsh PTY: the managed shell snippet receives FIFO events and logs post-mutation shell state for at least the `inject` path
+- Interactive zsh PTY: shell debug logging proves handler entry, parsed action, and post-mutation buffer state without requiring microphone hardware
 
 **End-to-end tests** for the pipeline (no hardware required — all inputs mocked):
 
@@ -392,6 +431,7 @@ Tests are **proof that the implementation satisfies the spec**. They are the pri
 - Known `TranscriptionResult` with timing metadata → `IntentResolver` → expected `Intent` for all cases
 - `Intent` sequence → `OutputManager` (mock shell) → expected pipe writes in correct order and format
 - Full pipeline: mock `AudioPipeline` emitting known segments → expected shell pipe output
+- Real interactive `zsh` running on a PTY with the managed snippet installed → expected shell debug log entries and post-mutation buffer state after pipe writes
 
 ### What Does Not Get Tested
 
@@ -423,7 +463,7 @@ Each milestone is independently verifiable. Milestones 1–3 require no hardware
 
 | # | Milestone | Verifiable by |
 |---|---|---|
-| 1 | Write known string to `OutputManager`, verify it appears in ZLE buffer via pipe; verify append concatenates, clear resets | Shell observation, no audio |
+| 1 | Write known string to `OutputManager`, verify the shell handler mutates live editor state for injection via pipe, and confirm append/clear behavior manually | PTY integration test plus shell observation, no audio |
 | 2 | Pass hardcoded `[Float]` through `WhisperKitTranscriber`, receive non-empty text | Unit assertion, no mic |
 | 3 | Feed mock `TranscriptionResult` into `IntentResolver`, verify correct `Intent` for all branches | Property-based test suite |
 | 4 | `AVAudioEngine` tap running, `SpeechSegment` emitted correctly on real speech with VAD silence detection | Mic required |

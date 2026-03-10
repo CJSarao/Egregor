@@ -9,22 +9,60 @@ struct ShellIntegrationInstaller {
     # BEGIN Egregore integration — managed by Egregore.app
     VOICE_PIPE="/tmp/egregore-$$.pipe"
     VOICE_REGISTRY="$HOME/.config/egregore/sessions"
+    VOICE_DEBUG="${EGREGORE_SHELL_DEBUG:-0}"
+    VOICE_DEBUG_LOG="${EGREGORE_SHELL_DEBUG_LOG:-$HOME/.local/share/egregore/logs/shell-integration.log}"
+
+    _egregore_debug() {
+        [[ "$VOICE_DEBUG" == "1" ]] || return 0
+        mkdir -p "${VOICE_DEBUG_LOG:h}"
+        print -r -- "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] [shell] $1" >> "$VOICE_DEBUG_LOG"
+    }
 
     mkfifo "$VOICE_PIPE" 2>/dev/null
     exec {VOICE_FD}<>"$VOICE_PIPE"
     mkdir -p "$VOICE_REGISTRY"
     echo "$VOICE_PIPE" > "$VOICE_REGISTRY/$$"
     trap "rm -f '$VOICE_REGISTRY/$$' '$VOICE_PIPE'" EXIT
+    typeset -g EGREGORE_PENDING_ACTION=""
+    typeset -g EGREGORE_PENDING_TEXT=""
+    _egregore_debug "registered pid=$$ pipe=$VOICE_PIPE registry=$VOICE_REGISTRY fd=$VOICE_FD"
 
-    _egregore_inject() {
-        local action text
-        IFS='|' read -r action text <&$VOICE_FD
-        case $action in
-            inject) BUFFER="${BUFFER:+$BUFFER }$text"; CURSOR=${#BUFFER}; zle redisplay ;;
-            clear)  BUFFER=""; CURSOR=0; zle redisplay ;;
+    _egregore_apply_pending() {
+        case $EGREGORE_PENDING_ACTION in
+            inject)
+                BUFFER="${BUFFER:+$BUFFER }$EGREGORE_PENDING_TEXT"
+                CURSOR=${#BUFFER}
+                zle -R
+                _egregore_debug "inject applied after_len=${#BUFFER} after_buffer<<<$BUFFER>>> after_cursor=$CURSOR"
+                ;;
+            clear)
+                BUFFER=""
+                CURSOR=0
+                zle -R
+                _egregore_debug "clear applied after_len=${#BUFFER} after_buffer<<<$BUFFER>>> after_cursor=$CURSOR"
+                ;;
+            *)
+                _egregore_debug "unknown pending action=${EGREGORE_PENDING_ACTION:-<empty>}"
+                ;;
         esac
     }
 
+    _egregore_inject() {
+        local action text
+        local before_buffer="$BUFFER"
+        local before_cursor="$CURSOR"
+        _egregore_debug "handler entry fd=$VOICE_FD before_len=${#before_buffer} before_buffer<<<$before_buffer>>> before_cursor=$before_cursor"
+        IFS='|' read -r action text <&$VOICE_FD || {
+            _egregore_debug "read failed fd=$VOICE_FD"
+            return 1
+        }
+        _egregore_debug "message action=${action:-<empty>} text_len=${#text} text<<<$text>>>"
+        EGREGORE_PENDING_ACTION="$action"
+        EGREGORE_PENDING_TEXT="$text"
+        zle _egregore_apply_pending
+    }
+
+    zle -N _egregore_apply_pending
     zle -N _egregore_inject
     zle -F $VOICE_FD _egregore_inject
     # END Egregore integration

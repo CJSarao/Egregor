@@ -17,6 +17,12 @@ final class HUDStateTests: XCTestCase {
                       silenceBefore: silenceBefore, duration: duration)
     }
 
+    private func makeCaptureSnapshot(
+        duration: Duration = .milliseconds(300)
+    ) -> SpeechCaptureSnapshot {
+        SpeechCaptureSnapshot(audio: [Float](repeating: 0.1, count: 3200), duration: duration)
+    }
+
     private func makeResult(
         text: String,
         confidence: Float = 0.9,
@@ -257,6 +263,7 @@ final class HUDStateTests: XCTestCase {
         let hotkeys  = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
         let txr      = MockTranscriber(makeResult(text: "git status"))
+        txr.partialText = "git"
         let output   = MockOutputManager()
         let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
                                          transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
@@ -267,7 +274,7 @@ final class HUDStateTests: XCTestCase {
         try await Task.sleep(nanoseconds: 20_000_000)
         hotkeys.emit(.pttBegan)
         try await Task.sleep(nanoseconds: 30_000_000)
-        txr.emitPartial("git")
+        await pipeline.emitSnapshot(makeCaptureSnapshot())
 
         let states = await stateTask.value
         XCTAssertEqual(states[0], .recording(mode: .ptt))
@@ -278,6 +285,7 @@ final class HUDStateTests: XCTestCase {
         let hotkeys  = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
         let txr      = MockTranscriber(makeResult(text: "ls -la", silenceBefore: .milliseconds(200)))
+        txr.partialText = "ls"
         let output   = MockOutputManager()
         let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
                                          transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
@@ -288,7 +296,7 @@ final class HUDStateTests: XCTestCase {
         try await Task.sleep(nanoseconds: 20_000_000)
         hotkeys.emit(.modeToggled)
         try await Task.sleep(nanoseconds: 30_000_000)
-        txr.emitPartial("ls")
+        await pipeline.emitSnapshot(makeCaptureSnapshot())
 
         let states = await stateTask.value
         XCTAssertEqual(states[0], .recording(mode: .open))
@@ -315,8 +323,9 @@ final class HUDStateTests: XCTestCase {
         XCTAssertEqual(states.count, 3)
         XCTAssertEqual(states[2], .injected("git status"))
 
-        // Emit a stale partial — should not produce a new recording state
-        txr.emitPartial("stale")
+        // Emit a stale snapshot — should not produce a new recording state
+        txr.partialText = "stale"
+        await pipeline.emitSnapshot(makeCaptureSnapshot())
         try await Task.sleep(nanoseconds: 50_000_000)
         // No additional state collected — isRecording is false
     }
@@ -346,5 +355,16 @@ final class HUDStateTests: XCTestCase {
         XCTAssertEqual(states[0], .recording(mode: .open))
         XCTAssertEqual(states[1], .idle)
         XCTAssertEqual(states[2], .recording(mode: .ptt))
+    }
+
+    func testHUDAnchoredFrameKeepsBottomMarginWhenHeightChanges() {
+        let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let compact = HUDWindowController.anchoredFrame(screenFrame: screen)
+        let expanded = HUDWindowController.anchoredFrame(screenFrame: screen, width: 420, height: 88)
+
+        XCTAssertEqual(compact.minY, HUDWindowController.bottomMargin)
+        XCTAssertEqual(expanded.minY, HUDWindowController.bottomMargin)
+        XCTAssertEqual(compact.midX, screen.midX, accuracy: 0.5)
+        XCTAssertEqual(expanded.midX, screen.midX, accuracy: 0.5)
     }
 }

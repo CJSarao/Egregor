@@ -9,6 +9,7 @@ actor AVAudioEnginePipeline: AudioPipeline {
     static let silenceRMSThreshold: Float = 0.01
     static let silenceSamplesThreshold = 11_200   // 700 ms at 16 kHz
     static let minimumSpeechSamples    = 1_600    // 100 ms at 16 kHz
+    static let partialSnapshotSamplesThreshold = 3_200 // 200 ms at 16 kHz
 
     // Wraps the start/stop lifecycle of a live or injected audio source.
     struct TapHandle: Sendable {
@@ -27,6 +28,8 @@ actor AVAudioEnginePipeline: AudioPipeline {
     // Output stream — created once, lives for the actor's lifetime.
     private let segmentContinuation: AsyncStream<SpeechSegment>.Continuation
     nonisolated let segments: AsyncStream<SpeechSegment>
+    private let snapshotContinuation: AsyncStream<SpeechCaptureSnapshot>.Continuation
+    nonisolated let captureSnapshots: AsyncStream<SpeechCaptureSnapshot>
 
     // VAD state — sample-count-based, mutated only on the actor.
     private var speechBuffer: [Float] = []
@@ -35,11 +38,16 @@ actor AVAudioEnginePipeline: AudioPipeline {
     private var trailingSilenceCount = 0   // consecutive silence samples after speech started
     private var samplesSinceLastEnd  = 0   // idle samples since last segment ended
     private var inSpeech             = false
+    private var samplesSinceLastSnapshot = 0
 
     init(tapInstaller: @escaping TapInstaller = AVAudioEnginePipeline.makeLiveTapInstaller()) {
-        var cont: AsyncStream<SpeechSegment>.Continuation!
-        segments = AsyncStream { cont = $0 }
-        segmentContinuation = cont
+        var segmentCont: AsyncStream<SpeechSegment>.Continuation!
+        segments = AsyncStream { segmentCont = $0 }
+        segmentContinuation = segmentCont
+
+        var snapshotCont: AsyncStream<SpeechCaptureSnapshot>.Continuation!
+        captureSnapshots = AsyncStream { snapshotCont = $0 }
+        snapshotContinuation = snapshotCont
         self.tapInstaller = tapInstaller
     }
 
@@ -90,13 +98,16 @@ actor AVAudioEnginePipeline: AudioPipeline {
                 inSpeech = true
                 silenceBeforeSpeech = samplesSinceLastEnd
                 trailingSilenceCount = 0
+                samplesSinceLastSnapshot = 0
             }
             speechBuffer.append(contentsOf: chunk)
             speechSampleCount += n
             trailingSilenceCount = 0
+            samplesSinceLastSnapshot += n
         } else if inSpeech {
             speechBuffer.append(contentsOf: chunk)
             trailingSilenceCount += n
+            samplesSinceLastSnapshot += n
             if trailingSilenceCount >= Self.silenceSamplesThreshold {
                 emitCurrentSegment()
                 resetVADState()
@@ -104,6 +115,8 @@ actor AVAudioEnginePipeline: AudioPipeline {
         } else {
             samplesSinceLastEnd += n
         }
+
+        emitSnapshotIfNeeded()
     }
 
     // MARK: - Private helpers
@@ -120,12 +133,22 @@ actor AVAudioEnginePipeline: AudioPipeline {
         samplesSinceLastEnd = trailingSilenceCount
     }
 
+    private func emitSnapshotIfNeeded() {
+        guard inSpeech,
+              speechSampleCount >= Self.minimumSpeechSamples,
+              samplesSinceLastSnapshot >= Self.partialSnapshotSamplesThreshold else { return }
+        let duration = Duration.seconds(Double(speechBuffer.count) / Self.outputSampleRate)
+        snapshotContinuation.yield(SpeechCaptureSnapshot(audio: speechBuffer, duration: duration))
+        samplesSinceLastSnapshot = 0
+    }
+
     private func resetVADState() {
         speechBuffer        = []
         speechSampleCount   = 0
         silenceBeforeSpeech = 0
         trailingSilenceCount = 0
         inSpeech            = false
+        samplesSinceLastSnapshot = 0
     }
 
     static func computeRMS(_ samples: [Float]) -> Float {

@@ -91,6 +91,17 @@ final class WhisperKitTranscriberTests: XCTestCase {
         XCTAssertEqual(result.text, "trimmed")
     }
 
+    func testPartialTranscribeReturnsTrimmedText() async {
+        let snapshot = SpeechCaptureSnapshot(audio: [0.1, 0.2], duration: .milliseconds(300))
+        let transcriber = WhisperKitTranscriber(engineProvider: {
+            { _, _ in ("  partial text  ", [0.0]) }
+        })
+
+        let result = await transcriber.transcribePartial(snapshot)
+
+        XCTAssertEqual(result, "partial text")
+    }
+
     func testTranscribeCarriesSegmentMetadata() async {
         let audio: [Float] = [0.1, 0.2, 0.3]
         let silence = Duration.milliseconds(2000)
@@ -110,7 +121,7 @@ final class WhisperKitTranscriberTests: XCTestCase {
     // MARK: - Static configuration
 
     func testModelVariantIsLargeV3Turbo() {
-        XCTAssertEqual(WhisperKitTranscriber.modelVariant, "openai_whisper-large-v3-turbo")
+        XCTAssertEqual(WhisperKitTranscriber.modelVariant, "openai_whisper-large-v3_turbo")
     }
 
     func testModelStorageURLIsUnderDotLocal() {

@@ -3,6 +3,10 @@ import SwiftUI
 
 @MainActor
 final class HUDWindowController {
+    nonisolated static let width: CGFloat = 420
+    nonisolated static let height: CGFloat = 88
+    nonisolated static let bottomMargin: CGFloat = 80
+
     private var window: NSWindow?
     private let viewModel: HUDViewModel
 
@@ -14,7 +18,7 @@ final class HUDWindowController {
         guard window == nil else { return }
 
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 320, height: 64),
+            contentRect: NSRect(x: 0, y: 0, width: Self.width, height: Self.height),
             styleMask: [.nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -27,18 +31,26 @@ final class HUDWindowController {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.ignoresMouseEvents = true
         panel.contentView = NSHostingView(rootView: HUDContentView(viewModel: viewModel))
+        panel.setContentSize(CGSize(width: Self.width, height: Self.height))
+        panel.contentMinSize = CGSize(width: Self.width, height: Self.height)
+        panel.contentMaxSize = CGSize(width: Self.width, height: Self.height)
 
-        positionAtBottomCenter(panel)
+        layoutWindow(panel)
         panel.orderFront(nil)
         window = panel
     }
 
-    private func positionAtBottomCenter(_ window: NSWindow) {
+    nonisolated static func anchoredFrame(screenFrame: CGRect, width: CGFloat = HUDWindowController.width, height: CGFloat = HUDWindowController.height, bottomMargin: CGFloat = HUDWindowController.bottomMargin) -> CGRect {
+        let x = screenFrame.midX - width / 2
+        let y = screenFrame.minY + bottomMargin
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    private func layoutWindow(_ window: NSWindow) {
         guard let screen = NSScreen.main else { return }
         let screenFrame = screen.visibleFrame
-        let x = screenFrame.midX - window.frame.width / 2
-        let y = screenFrame.minY + 80
-        window.setFrameOrigin(NSPoint(x: x, y: y))
+        let frame = Self.anchoredFrame(screenFrame: screenFrame)
+        window.setFrame(frame, display: true)
     }
 }
 
@@ -88,6 +100,7 @@ struct HUDContentView: View {
         Group {
             if viewModel.visible {
                 hudBody
+                    .fixedSize(horizontal: false, vertical: true)
                     .transition(.opacity.combined(with: .scale(scale: 0.95)))
             }
         }
@@ -102,6 +115,7 @@ struct HUDContentView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+        .frame(width: HUDWindowController.width, height: HUDWindowController.height, alignment: .leading)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)

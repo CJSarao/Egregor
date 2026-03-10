@@ -19,6 +19,8 @@ final class MockHotkeyManager: HotkeyManager, @unchecked Sendable {
 actor MockAudioPipeline: AudioPipeline {
     nonisolated let segments: AsyncStream<SpeechSegment>
     private let segCont: AsyncStream<SpeechSegment>.Continuation
+    nonisolated let captureSnapshots: AsyncStream<SpeechCaptureSnapshot>
+    private let snapshotCont: AsyncStream<SpeechCaptureSnapshot>.Continuation
 
     private(set) var startCount = 0
     private(set) var stopCount = 0
@@ -26,9 +28,12 @@ actor MockAudioPipeline: AudioPipeline {
     private var nextSegment: SpeechSegment?
 
     init(nextSegment: SpeechSegment? = nil) {
-        var cont: AsyncStream<SpeechSegment>.Continuation!
-        segments = AsyncStream { cont = $0 }
-        segCont = cont!
+        var segmentCont: AsyncStream<SpeechSegment>.Continuation!
+        segments = AsyncStream { segmentCont = $0 }
+        segCont = segmentCont!
+        var partialCont: AsyncStream<SpeechCaptureSnapshot>.Continuation!
+        captureSnapshots = AsyncStream { partialCont = $0 }
+        snapshotCont = partialCont!
         self.nextSegment = nextSegment
     }
 
@@ -45,22 +50,19 @@ actor MockAudioPipeline: AudioPipeline {
 
     func setNextSegment(_ seg: SpeechSegment) { nextSegment = seg }
     func emitSegment(_ seg: SpeechSegment)    { segCont.yield(seg) }
+    func emitSnapshot(_ snapshot: SpeechCaptureSnapshot) { snapshotCont.yield(snapshot) }
 }
 
 final class MockTranscriber: Transcriber, @unchecked Sendable {
-    nonisolated let partialResults: AsyncStream<PartialTranscription>
-    private let partialContinuation: AsyncStream<PartialTranscription>.Continuation
     var result: TranscriptionResult
+    var partialText = ""
 
     init(_ result: TranscriptionResult) {
         self.result = result
-        var cont: AsyncStream<PartialTranscription>.Continuation!
-        partialResults = AsyncStream { cont = $0 }
-        partialContinuation = cont!
     }
 
+    func transcribePartial(_ snapshot: SpeechCaptureSnapshot) async -> String { partialText }
     func transcribe(_ segment: SpeechSegment) async -> TranscriptionResult { result }
-    func emitPartial(_ text: String) { partialContinuation.yield(PartialTranscription(text: text)) }
 }
 
 final class MockOutputManager: OutputManager, @unchecked Sendable {
@@ -84,6 +86,12 @@ private func makeSpeechSegment(
     duration: Duration = .milliseconds(800)
 ) -> SpeechSegment {
     SpeechSegment(audio: [Float](repeating: 0.1, count: 1600), silenceBefore: silenceBefore, duration: duration)
+}
+
+private func makeCaptureSnapshot(
+    duration: Duration = .milliseconds(300)
+) -> SpeechCaptureSnapshot {
+    SpeechCaptureSnapshot(audio: [Float](repeating: 0.1, count: 3200), duration: duration)
 }
 
 private func makeTranscriptionResult(

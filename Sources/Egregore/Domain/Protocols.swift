@@ -5,6 +5,7 @@ protocol AudioPipeline {
     func stop() async
     func forceEnd() async
     var segments: AsyncStream<SpeechSegment> { get }
+    var captureSnapshots: AsyncStream<SpeechCaptureSnapshot> { get }
 }
 
 protocol HotkeyManager {
@@ -12,7 +13,7 @@ protocol HotkeyManager {
 }
 
 protocol Transcriber {
-    var partialResults: AsyncStream<PartialTranscription> { get }
+    func transcribePartial(_ snapshot: SpeechCaptureSnapshot) async -> String
     func transcribe(_ segment: SpeechSegment) async -> TranscriptionResult
 }
 

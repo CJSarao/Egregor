@@ -94,7 +94,7 @@
 - passes: true
 - ac:
   - Property-based tests cover IntentResolver command matching, non-command rejection, low-confidence discard behavior, and OutputManager buffer semantics
-  - End-to-end tests exercise transcriber, resolver, output formatting, and full mocked pipeline flows without requiring audio hardware
+  - End-to-end tests exercise transcriber, resolver, output formatting, full mocked pipeline flows, and at least one interactive zsh PTY shell integration proof without requiring audio hardware
   - The suite names or groups tests by spec feature so passing results can be traced back to the required behaviors and milestones
 - verify: swift test
 
@@ -114,9 +114,10 @@
 - passes: true
 - ac:
   - OPEN-mode and PTT final transcriptions either append to the active terminal buffer or emit logs showing exactly where resolution failed
-  - Session discovery logs include the frontmost app PID, shell PID traversal, and session file or pipe outcome without exposing implementation details to callers
+  - Session discovery logs include the frontmost app PID, shell PID traversal, matched registry PID ancestry, and session file or pipe outcome without exposing implementation details to callers
   - ROGER and ABORT attempts log whether the app executed send or clear and whether desktop permissions may block the action
-- verify: manual check in a fresh zsh terminal after installing the managed snippet, with logs confirming append and clear paths
+  - The managed zsh snippet supports an opt-in debug log that proves handler entry and post-mutation buffer state during manual debugging or PTY-backed tests
+- verify: swift test --filter ShellPTYIntegrationTests && manual check in a fresh zsh terminal after installing the managed snippet, with logs confirming append and clear paths
 
 ## Task 13
 - desc: Replace brittle fixed hotkey assumptions with a user-appropriate input scheme and visible configuration state for treadmill use

@@ -13,6 +13,8 @@ actor SessionController {
     private(set) var operatingMode: OperatingMode = .ptt
     private var pendingInputMode: InputMode?
     private var isRecording = false
+    private var partialSequence = 0
+    private var partialTask: Task<Void, Never>?
 
     nonisolated let hudStates: AsyncStream<HUDState>
     private let hudContinuation: AsyncStream<HUDState>.Continuation
@@ -40,7 +42,7 @@ actor SessionController {
     func start() {
         Task { await runHotkeyLoop() }
         Task { await runSegmentLoop() }
-        Task { await runPartialLoop() }
+        Task { await runCaptureSnapshotLoop() }
     }
 
     private func runHotkeyLoop() async {
@@ -58,6 +60,7 @@ actor SessionController {
                 return
             }
             isRecording = true
+            resetPartialTracking()
             hudContinuation.yield(.recording(mode: .ptt))
             await pipeline.start()
         case .pttEnded(let mode):
@@ -78,22 +81,31 @@ actor SessionController {
         case .ptt:
             operatingMode = .open
             isRecording = true
+            resetPartialTracking()
             log.log("mode toggled: PTT → OPEN", category: .session)
             hudContinuation.yield(.recording(mode: .open))
             await pipeline.start()
         case .open:
             operatingMode = .ptt
             isRecording = false
+            cancelPartialTask()
             log.log("mode toggled: OPEN → PTT", category: .session)
             hudContinuation.yield(.idle)
             await pipeline.stop()
         }
     }
 
-    private func runPartialLoop() async {
-        for await partial in transcriber.partialResults {
+    private func runCaptureSnapshotLoop() async {
+        for await snapshot in pipeline.captureSnapshots {
             guard isRecording else { continue }
-            hudContinuation.yield(.recording(mode: operatingMode, partialText: partial.text))
+            partialSequence += 1
+            let sequence = partialSequence
+            let mode = operatingMode
+            cancelPartialTask()
+            partialTask = Task {
+                let text = await self.transcriber.transcribePartial(snapshot)
+                self.applyPartialTranscript(text, sequence: sequence, mode: mode)
+            }
         }
     }
 
@@ -102,6 +114,7 @@ actor SessionController {
             let mode = pendingInputMode ?? .dictation
             pendingInputMode = nil
             isRecording = false
+            cancelPartialTask()
             log.log("segment received: duration=\(segment.duration), silenceBefore=\(segment.silenceBefore), mode=\(mode)", category: .session)
             hudContinuation.yield(.transcribing)
             let result = await transcriber.transcribe(segment)
@@ -111,9 +124,15 @@ actor SessionController {
             dispatch(intent, result: result)
             if operatingMode == .open {
                 isRecording = true
+                resetPartialTracking()
                 hudContinuation.yield(.recording(mode: .open))
             }
         }
+    }
+
+    private func applyPartialTranscript(_ text: String, sequence: Int, mode: OperatingMode) {
+        guard isRecording, sequence == partialSequence, !text.isEmpty else { return }
+        hudContinuation.yield(.recording(mode: mode, partialText: text))
     }
 
     private func dispatch(_ intent: Intent, result: TranscriptionResult) {
@@ -121,6 +140,7 @@ actor SessionController {
         case .inject(let text):
             log.log("dispatch: inject \"\(text)\"", category: .session)
             output.append(text)
+            log.log("dispatch: append handed to output manager", category: .session)
             hudContinuation.yield(.injected(text))
         case .command(.roger):
             log.log("dispatch: ROGER → send (confidence=\(result.confidence))", category: .session)
@@ -134,5 +154,15 @@ actor SessionController {
             log.log("dispatch: discard — text=\"\(result.text)\" confidence=\(result.confidence)", category: .session)
             hudContinuation.yield(.idle)
         }
+    }
+
+    private func resetPartialTracking() {
+        partialSequence += 1
+        cancelPartialTask()
+    }
+
+    private func cancelPartialTask() {
+        partialTask?.cancel()
+        partialTask = nil
     }
 }

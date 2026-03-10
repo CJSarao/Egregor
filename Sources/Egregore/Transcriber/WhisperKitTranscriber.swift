@@ -2,7 +2,7 @@ import Foundation
 import WhisperKit
 
 actor WhisperKitTranscriber: Transcriber {
-    static let modelVariant = "openai_whisper-large-v3-turbo"
+    static let modelVariant = "openai_whisper-large-v3_turbo"
     static let modelStorageURL = URL.homeDirectory
         .appending(path: ".local/share/egregore/models", directoryHint: .isDirectory)
 
@@ -13,9 +13,6 @@ actor WhisperKitTranscriber: Transcriber {
     private let progressHandler: ((Double) -> Void)?
     private let log: RuntimeLogger
 
-    nonisolated let partialResults: AsyncStream<PartialTranscription>
-    private let partialContinuation: AsyncStream<PartialTranscription>.Continuation
-
     init(progressHandler: ((Double) -> Void)? = nil, logger: RuntimeLogger = .shared) {
         self.progressHandler = progressHandler
         self.log = logger
@@ -23,9 +20,6 @@ actor WhisperKitTranscriber: Transcriber {
         self.engineProvider = { () async throws -> Engine in
             try await WhisperKitTranscriber.makeEngine(progressHandler: ph)
         }
-        var cont: AsyncStream<PartialTranscription>.Continuation!
-        partialResults = AsyncStream { cont = $0 }
-        partialContinuation = cont!
     }
 
     init(
@@ -36,18 +30,28 @@ actor WhisperKitTranscriber: Transcriber {
         self.engineProvider = engineProvider
         self.progressHandler = progressHandler
         self.log = logger
-        var cont: AsyncStream<PartialTranscription>.Continuation!
-        partialResults = AsyncStream { cont = $0 }
-        partialContinuation = cont!
+    }
+
+    func transcribePartial(_ snapshot: SpeechCaptureSnapshot) async -> String {
+        guard !snapshot.audio.isEmpty else { return "" }
+        do {
+            let run = try await loadedEngine()
+            let (text, _) = try await run(snapshot.audio) { _ in }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                log.log("partial transcription: duration=\(snapshot.duration) text=\"\(trimmed)\"", category: .transcriber)
+            }
+            return trimmed
+        } catch {
+            log.error("partial transcription failed: \(error)", category: .transcriber)
+            return ""
+        }
     }
 
     func transcribe(_ segment: SpeechSegment) async -> TranscriptionResult {
         do {
             let run = try await loadedEngine()
-            let cont = partialContinuation
-            let (text, avgLogprobs) = try await run(segment.audio) { partialText in
-                cont.yield(PartialTranscription(text: partialText))
-            }
+            let (text, avgLogprobs) = try await run(segment.audio) { _ in }
             let confidence = Self.confidence(from: avgLogprobs)
             log.log("transcribed \(segment.audio.count) samples → \(text.count) chars (confidence \(confidence))", category: .transcriber)
             return TranscriptionResult(text: text.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -61,7 +65,7 @@ actor WhisperKitTranscriber: Transcriber {
 
     private func loadedEngine() async throws -> Engine {
         if let engine { return engine }
-        log.log("loading WhisperKit engine (model: \(Self.modelVariant))", category: .transcriber)
+        log.log("loading WhisperKit engine (model: \(Self.modelVariant), storage: \(Self.modelStorageURL.path()))", category: .transcriber)
         let e = try await engineProvider()
         log.log("WhisperKit engine loaded", category: .transcriber)
         engine = e
@@ -76,14 +80,16 @@ actor WhisperKitTranscriber: Transcriber {
     }
 
     private static func makeEngine(progressHandler: ((Double) -> Void)?) async throws -> Engine {
-        let kit = try await WhisperKit(
+        let config = WhisperKitConfig(
             model: modelVariant,
             downloadBase: modelStorageURL,
+            modelRepo: "argmaxinc/whisperkit-coreml",
             verbose: false,
             prewarm: false,
             load: true,
             download: true
         )
+        let kit = try await WhisperKit(config)
         if let handler = progressHandler {
             kit.modelStateCallback = { _, newState in
                 if newState == .loaded { handler(1.0) }

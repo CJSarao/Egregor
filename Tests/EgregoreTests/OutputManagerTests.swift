@@ -3,6 +3,8 @@ import Darwin
 @testable import Egregore
 
 final class OutputManagerTests: XCTestCase {
+    private var logDir: URL!
+    private var logFile: URL!
 
     // Opens the FIFO with O_RDWR so both ends are held — no blocking on open,
     // and a non-blocking writer (ShellOutputManager) can connect immediately.
@@ -20,7 +22,19 @@ final class OutputManagerTests: XCTestCase {
         return n > 0 ? String(bytes: Array(buffer.prefix(n)), encoding: .utf8) ?? "" : ""
     }
 
+    private func readLog() -> String {
+        (try? String(contentsOf: logFile, encoding: .utf8)) ?? ""
+    }
+
+    override func setUp() {
+        super.setUp()
+        logDir = FileManager.default.temporaryDirectory
+            .appending(path: "egregore-output-logs-\(UUID().uuidString)")
+        logFile = logDir.appending(path: "egregore.log")
+    }
+
     override func tearDown() {
+        try? FileManager.default.removeItem(at: logDir)
         super.tearDown()
     }
 
@@ -113,15 +127,30 @@ final class OutputManagerTests: XCTestCase {
     }
 
     func testMissingSessionIsNoop() {
-        let manager = ShellOutputManager(sessionResolver: { nil })
+        let logger = RuntimeLogger(fileURL: logFile)
+        let manager = ShellOutputManager(sessionResolver: { nil }, logger: logger)
         manager.append("hello")
         manager.clear()
         // No crash — silent no-op when no session is found
+        let contents = readLog()
+        XCTAssertTrue(contents.contains("writeToPipe failed: no registered shell session found"))
     }
 
     func testSendDoesNotCrash() {
         // CGEvent posting may silently fail without Accessibility permissions in CI.
         let manager = ShellOutputManager(sessionResolver: { nil })
         manager.send()
+    }
+
+    func testMissingPipePathLogsDistinctError() {
+        let missingPath = "/tmp/egregore-test-missing-\(UUID().uuidString).pipe"
+        let logger = RuntimeLogger(fileURL: logFile)
+        let manager = ShellOutputManager(sessionResolver: { missingPath }, logger: logger)
+
+        manager.append("hello")
+
+        let contents = readLog()
+        XCTAssertTrue(contents.contains("resolved pipe missing at \(missingPath)"))
+        XCTAssertTrue(contents.contains("action=inject"))
     }
 }

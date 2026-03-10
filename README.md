@@ -84,9 +84,11 @@ protocol AudioPipeline {
     func stop() async
     func forceEnd() async
     var segments: AsyncStream<SpeechSegment> { get }
+    var captureSnapshots: AsyncStream<SpeechCaptureSnapshot> { get }
 }
 
 protocol Transcriber {
+    func transcribePartial(_ snapshot: SpeechCaptureSnapshot) async -> String
     func transcribe(_ segment: SpeechSegment) async -> TranscriptionResult
 }
 
@@ -101,7 +103,7 @@ protocol OutputManager {
 }
 ```
 
-Each protocol hides a large amount of complexity behind a tiny surface. `AudioPipeline` hides AVFoundation audio graphs, format conversion, buffer management, and the VAD algorithm. Callers just see `start()`, `stop()`, and an async stream of speech segments.
+Each protocol hides a large amount of complexity behind a tiny surface. `AudioPipeline` hides AVFoundation audio graphs, format conversion, buffer management, the VAD algorithm, and the in-progress snapshot stream used for live HUD text. Callers just see `start()`, `stop()`, and async streams for snapshots and final speech segments.
 
 **Why this matters:** In Swift, protocols are how you decouple modules and enable testing. `SessionController` depends on `any AudioPipeline`, not `AVAudioEnginePipeline` — so tests can inject a mock that emits fake segments without a microphone.
 
@@ -192,6 +194,8 @@ This is the most interesting systems-level piece. Egregore doesn't simulate keys
 
 This is terminal-emulator agnostic. Works in any app running zsh: Ghostty, Terminal.app, iTerm2, VS Code terminal, tmux panes.
 
+For debugging, the managed snippet also supports opt-in shell-side diagnostics with `EGREGORE_SHELL_DEBUG=1`, writing handler activity and post-mutation buffer state to `~/.local/share/egregore/logs/` or a custom `EGREGORE_SHELL_DEBUG_LOG` path.
+
 ### Testing Without Hardware
 
 Every module is testable without a microphone or audio output. The key pattern is **closure injection**:
@@ -207,7 +211,7 @@ let pipeline = AVAudioEnginePipeline { callback in
 await pipeline.processChunk(someFakeAudioData)
 ```
 
-WhisperKitTranscriber uses the same pattern — a `@Sendable () async throws -> Engine` closure that tests replace with a stub returning canned results. 128 tests run in CI with zero hardware dependencies.
+WhisperKitTranscriber uses the same pattern — a `@Sendable () async throws -> Engine` closure that tests replace with a stub returning canned results. The suite also includes PTY-backed shell integration tests so CI proves a real interactive zsh session receives FIFO writes and mutates shell state, not just that the app emitted the right bytes.
 
 ## Key Files to Read First
 

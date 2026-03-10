@@ -29,8 +29,9 @@ struct SpeechSegment {
     let duration: Duration
 }
 
-struct PartialTranscription: Equatable {
-    let text: String
+struct SpeechCaptureSnapshot: Equatable {
+    let audio: [Float]
+    let duration: Duration
 }
 
 struct TranscriptionResult {
