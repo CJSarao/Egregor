@@ -1,39 +1,35 @@
 import XCTest
 @testable import Egregore
 
-// Tests inject events via processFlagsChanged — no hardware or NSEvent delivery needed.
-// Each processFlagsChanged call is awaited on the actor before iter.next(), so emitted
-// events are already buffered when we read from the stream.
-
 final class HotkeyManagerTests: XCTestCase {
 
-    private func makeSUT() -> NSEventHotkeyManager {
-        NSEventHotkeyManager(installMonitors: false)
+    private func makeSUT(bindings: HotkeyBindings = .default) -> NSEventHotkeyManager {
+        NSEventHotkeyManager(bindings: bindings, installMonitors: false)
     }
 
-    // Convenience: press Right Command (command flag set)
     private func pressRightCommand(_ sut: NSEventHotkeyManager) async {
-        await sut.processFlagsChanged(keyCode: 54, flags: .command)
+        await sut.processFlagsChanged(keyCode: HotkeyBindings.default.pttKey.keyCode,
+                                       flags: HotkeyBindings.default.pttKey.flag)
     }
 
-    // Release Right Command (no command flag)
-    private func releaseRightCommand(_ sut: NSEventHotkeyManager,
-                                     withShift: Bool = false) async {
-        let flags: NSEvent.ModifierFlags = withShift ? [.shift] : []
-        await sut.processFlagsChanged(keyCode: 54, flags: flags)
+    private func releaseRightCommand(_ sut: NSEventHotkeyManager, withShift: Bool = false) async {
+        let flags: NSEvent.ModifierFlags = withShift ? [HotkeyBindings.default.commandModifier.flag] : []
+        await sut.processFlagsChanged(keyCode: HotkeyBindings.default.pttKey.keyCode, flags: flags)
     }
 
     private func pressRightShift(_ sut: NSEventHotkeyManager) async {
-        await sut.processFlagsChanged(keyCode: 60, flags: [.shift])
+        await sut.processFlagsChanged(keyCode: HotkeyBindings.default.commandModifier.keyCode,
+                                       flags: [HotkeyBindings.default.commandModifier.flag])
     }
 
     private func releaseRightShift(_ sut: NSEventHotkeyManager) async {
-        await sut.processFlagsChanged(keyCode: 60, flags: [])
+        await sut.processFlagsChanged(keyCode: HotkeyBindings.default.commandModifier.keyCode, flags: [])
     }
 
     private func tapRightControl(_ sut: NSEventHotkeyManager) async {
-        await sut.processFlagsChanged(keyCode: 62, flags: [.control])
-        await sut.processFlagsChanged(keyCode: 62, flags: [])
+        await sut.processFlagsChanged(keyCode: HotkeyBindings.default.modeToggle.keyCode,
+                                       flags: [HotkeyBindings.default.modeToggle.flag])
+        await sut.processFlagsChanged(keyCode: HotkeyBindings.default.modeToggle.keyCode, flags: [])
     }
 
     // MARK: - PTT begin
@@ -53,21 +49,18 @@ final class HotkeyManagerTests: XCTestCase {
         var iter = sut.events.makeAsyncIterator()
 
         await pressRightCommand(sut)
-        await pressRightCommand(sut)   // already down — should be ignored
+        await pressRightCommand(sut)
 
-        // Only one pttBegan should be in the stream.
         var collected: [HotkeyEvent] = []
         let task = Task {
             for await e in sut.events { collected.append(e) }
         }
-        // First event already buffered.
         _ = await iter.next()
         try? await Task.sleep(for: .milliseconds(30))
         task.cancel()
 
-        // Only one pttBegan ever emitted.
         let began = collected.filter { $0 == .pttBegan }
-        XCTAssertEqual(began.count, 0)   // iter consumed the only one; none left
+        XCTAssertEqual(began.count, 0)
     }
 
     // MARK: - PTT end — dictation mode
@@ -77,7 +70,7 @@ final class HotkeyManagerTests: XCTestCase {
         var iter = sut.events.makeAsyncIterator()
 
         await pressRightCommand(sut)
-        _ = await iter.next()   // consume pttBegan
+        _ = await iter.next()
 
         await releaseRightCommand(sut, withShift: false)
 
@@ -93,7 +86,7 @@ final class HotkeyManagerTests: XCTestCase {
 
         await pressRightShift(sut)
         await pressRightCommand(sut)
-        _ = await iter.next()   // consume pttBegan
+        _ = await iter.next()
 
         await releaseRightCommand(sut, withShift: true)
 
@@ -105,12 +98,11 @@ final class HotkeyManagerTests: XCTestCase {
         let sut = makeSUT()
         var iter = sut.events.makeAsyncIterator()
 
-        // Press shift, then command, then release shift before releasing command.
         await pressRightShift(sut)
         await pressRightCommand(sut)
-        _ = await iter.next()   // consume pttBegan
+        _ = await iter.next()
 
-        await releaseRightShift(sut)             // shift gone before command release
+        await releaseRightShift(sut)
         await releaseRightCommand(sut, withShift: false)
 
         let event = await iter.next()
@@ -149,12 +141,13 @@ final class HotkeyManagerTests: XCTestCase {
         let sut = makeSUT()
         var iter = sut.events.makeAsyncIterator()
 
-        // Press and hold — should emit once.
-        await sut.processFlagsChanged(keyCode: 62, flags: [.control])
-        await sut.processFlagsChanged(keyCode: 62, flags: [.control]) // hold — ignored
-        await sut.processFlagsChanged(keyCode: 62, flags: [])         // release
+        await sut.processFlagsChanged(keyCode: HotkeyBindings.default.modeToggle.keyCode,
+                                       flags: [HotkeyBindings.default.modeToggle.flag])
+        await sut.processFlagsChanged(keyCode: HotkeyBindings.default.modeToggle.keyCode,
+                                       flags: [HotkeyBindings.default.modeToggle.flag])
+        await sut.processFlagsChanged(keyCode: HotkeyBindings.default.modeToggle.keyCode, flags: [])
 
-        _ = await iter.next()   // one modeToggled
+        _ = await iter.next()
 
         var extra = 0
         let task = Task {
@@ -231,5 +224,69 @@ final class HotkeyManagerTests: XCTestCase {
         try? await Task.sleep(for: .milliseconds(30))
         task.cancel()
         XCTAssertEqual(count, 0)
+    }
+
+    // MARK: - Custom bindings
+
+    func testCustomBindingsIgnoresDefaultPTTKey() async {
+        let custom = HotkeyBindings(
+            pttKey: KeyBinding(keyCode: 61, flag: .option, displayName: "Right Option"),
+            commandModifier: KeyBinding(keyCode: 60, flag: .shift, displayName: "Right Shift"),
+            modeToggle: KeyBinding(keyCode: 62, flag: .control, displayName: "Right Control")
+        )
+        let sut = makeSUT(bindings: custom)
+
+        // Default Right Command (54) should NOT trigger PTT
+        await sut.processFlagsChanged(keyCode: 54, flags: .command)
+        var count = 0
+        let task = Task {
+            for await _ in sut.events { count += 1 }
+        }
+        try? await Task.sleep(for: .milliseconds(30))
+        task.cancel()
+        XCTAssertEqual(count, 0)
+    }
+
+    func testCustomBindingsPTTUsesConfiguredKeyCode() async {
+        let custom = HotkeyBindings(
+            pttKey: KeyBinding(keyCode: 61, flag: .option, displayName: "Right Option"),
+            commandModifier: KeyBinding(keyCode: 60, flag: .shift, displayName: "Right Shift"),
+            modeToggle: KeyBinding(keyCode: 62, flag: .control, displayName: "Right Control")
+        )
+        let sut = makeSUT(bindings: custom)
+        var iter = sut.events.makeAsyncIterator()
+
+        await sut.processFlagsChanged(keyCode: 61, flags: .option)
+        let event = await iter.next()
+        XCTAssertEqual(event, .pttBegan)
+    }
+
+    func testCustomBindingsModeToggleUsesConfiguredKeyCode() async {
+        let custom = HotkeyBindings(
+            pttKey: KeyBinding(keyCode: 54, flag: .command, displayName: "Right Command"),
+            commandModifier: KeyBinding(keyCode: 60, flag: .shift, displayName: "Right Shift"),
+            modeToggle: KeyBinding(keyCode: 61, flag: .option, displayName: "Right Option")
+        )
+        let sut = makeSUT(bindings: custom)
+        var iter = sut.events.makeAsyncIterator()
+
+        // Tap custom mode toggle key
+        await sut.processFlagsChanged(keyCode: 61, flags: .option)
+        await sut.processFlagsChanged(keyCode: 61, flags: [])
+
+        let event = await iter.next()
+        XCTAssertEqual(event, .modeToggled)
+    }
+
+    func testBindingsExposedOnManager() async {
+        let custom = HotkeyBindings(
+            pttKey: KeyBinding(keyCode: 61, flag: .option, displayName: "Right Option"),
+            commandModifier: KeyBinding(keyCode: 60, flag: .shift, displayName: "Right Shift"),
+            modeToggle: KeyBinding(keyCode: 59, flag: .control, displayName: "Left Control")
+        )
+        let sut = makeSUT(bindings: custom)
+        let b = await sut.bindings
+        XCTAssertEqual(b.pttKey.displayName, "Right Option")
+        XCTAssertEqual(b.modeToggle.displayName, "Left Control")
     }
 }

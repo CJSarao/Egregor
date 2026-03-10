@@ -59,9 +59,7 @@ struct MenuBarView: View {
             }
 
             Divider()
-            Text("Hold Right Command to record. Tap Right Control to toggle OPEN mode.")
-                .font(.system(size: 11))
-                .fixedSize(horizontal: false, vertical: true)
+            hotkeyBindingsSection
 
             Button("Open Log File") {
                 NSWorkspace.shared.open(RuntimeLogger.logFileURL)
@@ -87,6 +85,29 @@ struct MenuBarView: View {
             Text("Session runtime active")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private var hotkeyBindingsSection: some View {
+        let b = runtime.hotkeyBindings
+        return VStack(alignment: .leading, spacing: 4) {
+            Text("Hotkeys")
+                .font(.system(size: 11, weight: .semibold))
+            statusLine("PTT record", "Hold \(b.pttKey.displayName)")
+            statusLine("Command mode", "\(b.commandModifier.displayName) + PTT")
+            statusLine("Mode toggle", "Tap \(b.modeToggle.displayName)")
+
+            Toggle("Key diagnostics", isOn: Binding(
+                get: { runtime.keyDiagnosticsEnabled },
+                set: { runtime.setKeyDiagnostics($0) }
+            ))
+            .font(.system(size: 11))
+
+            if runtime.keyDiagnosticsEnabled {
+                Text("All key events logged — check log file")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.orange)
+            }
         }
     }
 

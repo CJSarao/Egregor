@@ -121,7 +121,7 @@
 ## Task 13
 - desc: Replace brittle fixed hotkey assumptions with a user-appropriate input scheme and visible configuration state for treadmill use
 - deps: Task 11
-- passes: false
+- passes: true
 - ac:
   - The default PTT and mode-toggle bindings work on common external keyboards, including Windows-layout Mac keyboards that lack a distinct right option
   - The menu bar UI shows the current bindings in user-facing language instead of hardcoded stale text

@@ -32,15 +32,21 @@ final class AppRuntime: ObservableObject {
     @Published private(set) var accessibilityTrusted = AXIsProcessTrusted()
     @Published private(set) var lastError: String?
     @Published var showsShellSnippet = false
+    @Published private(set) var keyDiagnosticsEnabled = false
 
     let shellSnippet = ShellIntegrationInstaller.snippet
+    let hotkeyBindings: HotkeyBindings
 
     private let installer = ShellIntegrationInstaller()
     private let controller: SessionController
     private let hudController: HUDWindowController
+    private let hotkeyManager: NSEventHotkeyManager
 
     init() {
-        let hotkeys = NSEventHotkeyManager()
+        let bindings = HotkeyBindings.default
+        self.hotkeyBindings = bindings
+        let hotkeys = NSEventHotkeyManager(bindings: bindings)
+        self.hotkeyManager = hotkeys
         let pipeline = AVAudioEnginePipeline()
         let transcriber = WhisperKitTranscriber()
         let resolver = EgregoreIntentResolver()
@@ -97,5 +103,10 @@ final class AppRuntime: ObservableObject {
 
     func clearError() {
         lastError = nil
+    }
+
+    func setKeyDiagnostics(_ enabled: Bool) {
+        keyDiagnosticsEnabled = enabled
+        Task { await hotkeyManager.setDiagnostics(enabled: enabled) }
     }
 }
