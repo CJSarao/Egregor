@@ -131,7 +131,7 @@
 ## Task 14
 - desc: Implement real-time speech-to-text feedback so both PTT and OPEN mode show a live transcript in the HUD during capture and inject the finalized text when the utterance ends
 - deps: Task 11, Task 12
-- passes: false
+- passes: true
 - ac:
   - While an utterance is actively being captured, the HUD shows incrementally updated transcript text with low enough latency to provide immediate user feedback
   - In PTT mode, releasing the key finalizes the current utterance, dismisses the HUD transcript state, and injects the finalized text into the focused terminal session

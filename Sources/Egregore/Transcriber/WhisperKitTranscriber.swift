@@ -6,36 +6,48 @@ actor WhisperKitTranscriber: Transcriber {
     static let modelStorageURL = URL.homeDirectory
         .appending(path: ".local/share/egregore/models", directoryHint: .isDirectory)
 
-    // Injected engine: receives raw audio, returns (text, avgLogprobs) without leaking WhisperKit types.
-    // Production path creates WhisperKit lazily; test path injects a stub.
-    private let engineProvider: @Sendable () async throws -> @Sendable ([Float]) async throws -> (text: String, avgLogprobs: [Float])
-    private var engine: (@Sendable ([Float]) async throws -> (text: String, avgLogprobs: [Float]))?
+    typealias Engine = @Sendable ([Float], @escaping @Sendable (String) -> Void) async throws -> (text: String, avgLogprobs: [Float])
+
+    private let engineProvider: @Sendable () async throws -> Engine
+    private var engine: Engine?
     private let progressHandler: ((Double) -> Void)?
     private let log: RuntimeLogger
+
+    nonisolated let partialResults: AsyncStream<PartialTranscription>
+    private let partialContinuation: AsyncStream<PartialTranscription>.Continuation
 
     init(progressHandler: ((Double) -> Void)? = nil, logger: RuntimeLogger = .shared) {
         self.progressHandler = progressHandler
         self.log = logger
         let ph = progressHandler
-        self.engineProvider = {
+        self.engineProvider = { () async throws -> Engine in
             try await WhisperKitTranscriber.makeEngine(progressHandler: ph)
         }
+        var cont: AsyncStream<PartialTranscription>.Continuation!
+        partialResults = AsyncStream { cont = $0 }
+        partialContinuation = cont!
     }
 
     init(
-        engineProvider: @escaping @Sendable () async throws -> @Sendable ([Float]) async throws -> (text: String, avgLogprobs: [Float]),
+        engineProvider: @escaping @Sendable () async throws -> Engine,
         progressHandler: ((Double) -> Void)? = nil,
         logger: RuntimeLogger = .shared
     ) {
         self.engineProvider = engineProvider
         self.progressHandler = progressHandler
         self.log = logger
+        var cont: AsyncStream<PartialTranscription>.Continuation!
+        partialResults = AsyncStream { cont = $0 }
+        partialContinuation = cont!
     }
 
     func transcribe(_ segment: SpeechSegment) async -> TranscriptionResult {
         do {
             let run = try await loadedEngine()
-            let (text, avgLogprobs) = try await run(segment.audio)
+            let cont = partialContinuation
+            let (text, avgLogprobs) = try await run(segment.audio) { partialText in
+                cont.yield(PartialTranscription(text: partialText))
+            }
             let confidence = Self.confidence(from: avgLogprobs)
             log.log("transcribed \(segment.audio.count) samples → \(text.count) chars (confidence \(confidence))", category: .transcriber)
             return TranscriptionResult(text: text.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -47,7 +59,7 @@ actor WhisperKitTranscriber: Transcriber {
         }
     }
 
-    private func loadedEngine() async throws -> @Sendable ([Float]) async throws -> (text: String, avgLogprobs: [Float]) {
+    private func loadedEngine() async throws -> Engine {
         if let engine { return engine }
         log.log("loading WhisperKit engine (model: \(Self.modelVariant))", category: .transcriber)
         let e = try await engineProvider()
@@ -63,7 +75,7 @@ actor WhisperKitTranscriber: Transcriber {
         return max(0, min(1, Foundation.exp(mean)))
     }
 
-    private static func makeEngine(progressHandler: ((Double) -> Void)?) async throws -> @Sendable ([Float]) async throws -> (text: String, avgLogprobs: [Float]) {
+    private static func makeEngine(progressHandler: ((Double) -> Void)?) async throws -> Engine {
         let kit = try await WhisperKit(
             model: modelVariant,
             downloadBase: modelStorageURL,
@@ -77,8 +89,15 @@ actor WhisperKitTranscriber: Transcriber {
                 if newState == .loaded { handler(1.0) }
             }
         }
-        return { audioArray in
-            let results = try await kit.transcribe(audioArray: audioArray)
+        return { (audioArray: [Float], onPartial: @escaping @Sendable (String) -> Void) async throws -> (text: String, avgLogprobs: [Float]) in
+            let results = try await kit.transcribe(
+                audioArray: audioArray,
+                callback: { progress in
+                    let partial = progress.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !partial.isEmpty { onPartial(partial) }
+                    return nil
+                }
+            )
             let text = results.map(\.text).joined(separator: " ")
             let avgLogprobs = results.flatMap(\.segments).map(\.avgLogprob)
             return (text, avgLogprobs)

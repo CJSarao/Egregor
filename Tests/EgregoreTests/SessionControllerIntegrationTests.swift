@@ -48,9 +48,19 @@ actor MockAudioPipeline: AudioPipeline {
 }
 
 final class MockTranscriber: Transcriber, @unchecked Sendable {
+    nonisolated let partialResults: AsyncStream<PartialTranscription>
+    private let partialContinuation: AsyncStream<PartialTranscription>.Continuation
     var result: TranscriptionResult
-    init(_ result: TranscriptionResult) { self.result = result }
+
+    init(_ result: TranscriptionResult) {
+        self.result = result
+        var cont: AsyncStream<PartialTranscription>.Continuation!
+        partialResults = AsyncStream { cont = $0 }
+        partialContinuation = cont!
+    }
+
     func transcribe(_ segment: SpeechSegment) async -> TranscriptionResult { result }
+    func emitPartial(_ text: String) { partialContinuation.yield(PartialTranscription(text: text)) }
 }
 
 final class MockOutputManager: OutputManager, @unchecked Sendable {

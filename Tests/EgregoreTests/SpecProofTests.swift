@@ -238,7 +238,7 @@ final class SpecEndToEndTests: XCTestCase {
     func testTranscriberReturnsTextFromSynthesizedInput() async {
         let segment = makeSegment()
         let transcriber = WhisperKitTranscriber(engineProvider: {
-            { _ in ("synthesized text", [-0.2]) }
+            { _, _ in ("synthesized text", [-0.2]) }
         })
 
         let result = await transcriber.transcribe(segment)
@@ -535,10 +535,14 @@ final class SpecEndToEndTests: XCTestCase {
 // MARK: - Sequential mock transcriber for multi-segment E2E tests
 
 final class SequentialMockTranscriber: Transcriber, @unchecked Sendable {
+    nonisolated let partialResults: AsyncStream<PartialTranscription>
     private var results: [TranscriptionResult]
     private var index = 0
 
-    init(results: [TranscriptionResult]) { self.results = results }
+    init(results: [TranscriptionResult]) {
+        self.results = results
+        partialResults = AsyncStream { $0.finish() }
+    }
 
     func transcribe(_ segment: SpeechSegment) async -> TranscriptionResult {
         let r = results[min(index, results.count - 1)]

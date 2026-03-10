@@ -41,7 +41,7 @@ final class WhisperKitTranscriberTests: XCTestCase {
     func testTranscribeReturnsTextAndConfidenceFromEngine() async {
         let segment = SpeechSegment(audio: [], silenceBefore: .zero, duration: .zero)
         let transcriber = WhisperKitTranscriber(engineProvider: {
-            { _ in ("hello world", [-0.5]) }
+            { _, _ in ("hello world", [-0.5]) }
         })
 
         let result = await transcriber.transcribe(segment)
@@ -56,7 +56,7 @@ final class WhisperKitTranscriberTests: XCTestCase {
         struct TestError: Error {}
         let segment = SpeechSegment(audio: [0.1, 0.2], silenceBefore: .zero, duration: .zero)
         let transcriber = WhisperKitTranscriber(engineProvider: {
-            { _ in throw TestError() }
+            { _, _ in throw TestError() }
         })
 
         let result = await transcriber.transcribe(segment)
@@ -70,7 +70,7 @@ final class WhisperKitTranscriberTests: XCTestCase {
         let segment = SpeechSegment(audio: [], silenceBefore: .zero, duration: .zero)
         let transcriber = WhisperKitTranscriber(engineProvider: {
             await counter.increment()
-            return { _ in ("text", [0.0]) }
+            return { _, _ in ("text", [0.0]) }
         })
 
         _ = await transcriber.transcribe(segment)
@@ -83,7 +83,7 @@ final class WhisperKitTranscriberTests: XCTestCase {
     func testTranscribeTrimsWhitespace() async {
         let segment = SpeechSegment(audio: [], silenceBefore: .zero, duration: .zero)
         let transcriber = WhisperKitTranscriber(engineProvider: {
-            { _ in ("  trimmed  ", [0.0]) }
+            { _, _ in ("  trimmed  ", [0.0]) }
         })
 
         let result = await transcriber.transcribe(segment)
@@ -97,7 +97,7 @@ final class WhisperKitTranscriberTests: XCTestCase {
         let duration = Duration.milliseconds(500)
         let segment = SpeechSegment(audio: audio, silenceBefore: silence, duration: duration)
         let transcriber = WhisperKitTranscriber(engineProvider: {
-            { _ in ("ok", [0.0]) }
+            { _, _ in ("ok", [0.0]) }
         })
 
         let result = await transcriber.transcribe(segment)

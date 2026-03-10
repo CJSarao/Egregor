@@ -251,6 +251,76 @@ final class HUDStateTests: XCTestCase {
         XCTAssertEqual(states[2], .cleared)
     }
 
+    // MARK: - Live transcript partial text in HUD
+
+    func testPTTPartialTextAppearsInRecordingState() async throws {
+        let hotkeys  = MockHotkeyManager()
+        let pipeline = MockAudioPipeline()
+        let txr      = MockTranscriber(makeResult(text: "git status"))
+        let output   = MockOutputManager()
+        let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
+                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        await ctrl.start()
+
+        // recording(ptt) + recording(ptt, partial) = 2 states
+        let stateTask = Task { await self.collectStates(from: ctrl, count: 2) }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        hotkeys.emit(.pttBegan)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        txr.emitPartial("git")
+
+        let states = await stateTask.value
+        XCTAssertEqual(states[0], .recording(mode: .ptt))
+        XCTAssertEqual(states[1], .recording(mode: .ptt, partialText: "git"))
+    }
+
+    func testOPENPartialTextAppearsInRecordingState() async throws {
+        let hotkeys  = MockHotkeyManager()
+        let pipeline = MockAudioPipeline()
+        let txr      = MockTranscriber(makeResult(text: "ls -la", silenceBefore: .milliseconds(200)))
+        let output   = MockOutputManager()
+        let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
+                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        await ctrl.start()
+
+        // recording(open) + recording(open, partial) = 2 states
+        let stateTask = Task { await self.collectStates(from: ctrl, count: 2) }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        hotkeys.emit(.modeToggled)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        txr.emitPartial("ls")
+
+        let states = await stateTask.value
+        XCTAssertEqual(states[0], .recording(mode: .open))
+        XCTAssertEqual(states[1], .recording(mode: .open, partialText: "ls"))
+    }
+
+    func testPartialTextNotEmittedAfterSegmentProcessed() async throws {
+        let hotkeys  = MockHotkeyManager()
+        let pipeline = MockAudioPipeline(nextSegment: makeSpeechSegment())
+        let txr      = MockTranscriber(makeResult(text: "git status"))
+        let output   = MockOutputManager()
+        let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
+                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        await ctrl.start()
+
+        // recording + transcribing + injected = 3, then partial should be ignored
+        let stateTask = Task { await self.collectStates(from: ctrl, count: 3) }
+        try await Task.sleep(nanoseconds: 20_000_000)
+
+        hotkeys.emit(.pttBegan)
+        hotkeys.emit(.pttEnded(mode: .dictation))
+
+        let states = await stateTask.value
+        XCTAssertEqual(states.count, 3)
+        XCTAssertEqual(states[2], .injected("git status"))
+
+        // Emit a stale partial — should not produce a new recording state
+        txr.emitPartial("stale")
+        try await Task.sleep(nanoseconds: 50_000_000)
+        // No additional state collected — isRecording is false
+    }
+
     // MARK: - HUD reflects mode in recording state
 
     func testHUDReflectsCurrentMode() async throws {

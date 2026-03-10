@@ -29,6 +29,10 @@ struct SpeechSegment {
     let duration: Duration
 }
 
+struct PartialTranscription: Equatable {
+    let text: String
+}
+
 struct TranscriptionResult {
     let text: String
     let confidence: Float
@@ -59,7 +63,7 @@ enum VoiceCommand {
 
 enum HUDState: Equatable {
     case idle
-    case recording(mode: SessionController.OperatingMode)
+    case recording(mode: SessionController.OperatingMode, partialText: String? = nil)
     case transcribing
     case injected(String)
     case cleared

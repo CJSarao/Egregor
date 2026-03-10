@@ -12,6 +12,7 @@ actor SessionController {
 
     private(set) var operatingMode: OperatingMode = .ptt
     private var pendingInputMode: InputMode?
+    private var isRecording = false
 
     nonisolated let hudStates: AsyncStream<HUDState>
     private let hudContinuation: AsyncStream<HUDState>.Continuation
@@ -39,6 +40,7 @@ actor SessionController {
     func start() {
         Task { await runHotkeyLoop() }
         Task { await runSegmentLoop() }
+        Task { await runPartialLoop() }
     }
 
     private func runHotkeyLoop() async {
@@ -55,6 +57,7 @@ actor SessionController {
                 log.log("pttBegan ignored (OPEN mode active)", category: .session)
                 return
             }
+            isRecording = true
             hudContinuation.yield(.recording(mode: .ptt))
             await pipeline.start()
         case .pttEnded(let mode):
@@ -74,14 +77,23 @@ actor SessionController {
         switch operatingMode {
         case .ptt:
             operatingMode = .open
+            isRecording = true
             log.log("mode toggled: PTT → OPEN", category: .session)
             hudContinuation.yield(.recording(mode: .open))
             await pipeline.start()
         case .open:
             operatingMode = .ptt
+            isRecording = false
             log.log("mode toggled: OPEN → PTT", category: .session)
             hudContinuation.yield(.idle)
             await pipeline.stop()
+        }
+    }
+
+    private func runPartialLoop() async {
+        for await partial in transcriber.partialResults {
+            guard isRecording else { continue }
+            hudContinuation.yield(.recording(mode: operatingMode, partialText: partial.text))
         }
     }
 
@@ -89,6 +101,7 @@ actor SessionController {
         for await segment in pipeline.segments {
             let mode = pendingInputMode ?? .dictation
             pendingInputMode = nil
+            isRecording = false
             log.log("segment received: duration=\(segment.duration), silenceBefore=\(segment.silenceBefore), mode=\(mode)", category: .session)
             hudContinuation.yield(.transcribing)
             let result = await transcriber.transcribe(segment)
@@ -96,6 +109,10 @@ actor SessionController {
             let intent = resolver.resolve(result, mode: mode)
             log.log("resolved intent: \(intent)", category: .session)
             dispatch(intent, result: result)
+            if operatingMode == .open {
+                isRecording = true
+                hudContinuation.yield(.recording(mode: .open))
+            }
         }
     }
 
