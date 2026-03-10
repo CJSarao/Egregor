@@ -39,7 +39,7 @@ swift build
 swift test       # 128 tests, no hardware needed
 ```
 
-The binary lands in `.build/debug/Egregore`. On first transcription, WhisperKit downloads the Whisper model (~1 GB) to `~/.local/share/egregore/models/`.
+The binary lands in `.build/debug/Egregore`. On startup, Egregore begins prewarming WhisperKit in the background; if the model is missing, WhisperKit downloads it (~1 GB) to `~/.local/share/egregore/models/`.
 
 ## Project Structure
 
@@ -187,9 +187,9 @@ struct EgregoreApp: App {
 
 This is the most interesting systems-level piece. Egregore doesn't simulate keystrokes to type text (fragile, slow). Instead, it writes directly into zsh's line editor (ZLE) via a named pipe:
 
-1. A zsh snippet (installed into `~/.zshrc`) creates a named pipe per shell session
+1. A zsh snippet (installed into `~/.zshrc`) creates a named pipe per shell session and keeps a last-active marker under `~/.config/egregore/activity/`
 2. ZLE watches the pipe's file descriptor for incoming data
-3. Egregore finds the active terminal's shell PID, looks up its pipe path, and writes `inject|hello world\n`
+3. Egregore finds the frontmost terminal app, ranks descendant shell sessions by recent activity, looks up the best pipe path, and writes `inject|hello world\n`
 4. ZLE reads it and sets `BUFFER="hello world"` — text appears instantly
 
 This is terminal-emulator agnostic. Works in any app running zsh: Ghostty, Terminal.app, iTerm2, VS Code terminal, tmux panes.

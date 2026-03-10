@@ -5,6 +5,8 @@ import Darwin
 final class OutputManagerTests: XCTestCase {
     private var logDir: URL!
     private var logFile: URL!
+    private var registryURL: URL!
+    private var activityURL: URL!
 
     // Opens the FIFO with O_RDWR so both ends are held — no blocking on open,
     // and a non-blocking writer (ShellOutputManager) can connect immediately.
@@ -31,6 +33,10 @@ final class OutputManagerTests: XCTestCase {
         logDir = FileManager.default.temporaryDirectory
             .appending(path: "egregore-output-logs-\(UUID().uuidString)")
         logFile = logDir.appending(path: "egregore.log")
+        registryURL = logDir.appending(path: "sessions", directoryHint: .isDirectory)
+        activityURL = logDir.appending(path: "activity", directoryHint: .isDirectory)
+        try? FileManager.default.createDirectory(at: registryURL, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: activityURL, withIntermediateDirectories: true)
     }
 
     override func tearDown() {
@@ -166,5 +172,46 @@ final class OutputManagerTests: XCTestCase {
         let contents = readLog()
         XCTAssertTrue(contents.contains("textBytes=12"))
         XCTAssertFalse(contents.contains("secret-token"))
+    }
+
+    func testResolveSessionPrefersMostRecentlyActiveShell() throws {
+        let (olderPath, olderFD) = makePipe()
+        let (newerPath, newerFD) = makePipe()
+        defer {
+            Darwin.close(olderFD)
+            Darwin.close(newerFD)
+            Darwin.unlink(olderPath)
+            Darwin.unlink(newerPath)
+        }
+
+        try olderPath.write(to: registryURL.appending(path: "201"), atomically: true, encoding: .utf8)
+        try newerPath.write(to: registryURL.appending(path: "202"), atomically: true, encoding: .utf8)
+        try "10.0".write(to: activityURL.appending(path: "201"), atomically: true, encoding: .utf8)
+        try "20.0".write(to: activityURL.appending(path: "202"), atomically: true, encoding: .utf8)
+
+        let logger = RuntimeLogger(fileURL: logFile)
+        let manager = ShellOutputManager(
+            registryURL: registryURL,
+            activityURL: activityURL,
+            frontmostApplicationProvider: { .init(pid: 100, name: "Ghostty") },
+            childPIDProvider: { pid in
+                switch pid {
+                case 100: return [200, 300]
+                case 200: return [201]
+                case 300: return [202]
+                default: return []
+                }
+            },
+            logger: logger
+        )
+
+        manager.append("focused shell")
+
+        XCTAssertEqual(readAll(fd: newerFD), "inject|focused shell\n")
+        XCTAssertEqual(readAll(fd: olderFD), "")
+
+        let contents = readLog()
+        XCTAssertTrue(contents.contains("session resolve: candidates"))
+        XCTAssertTrue(contents.contains("shell PID 202"))
     }
 }

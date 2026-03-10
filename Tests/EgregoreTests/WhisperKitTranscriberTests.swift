@@ -98,6 +98,44 @@ final class WhisperKitTranscriberTests: XCTestCase {
         XCTAssertEqual(count, 1)
     }
 
+    func testConcurrentRequestsShareSingleEngineLoad() async {
+        let counter = Counter()
+        let segment = SpeechSegment(audio: [0.1], silenceBefore: .zero, duration: .zero)
+        let snapshot = SpeechCaptureSnapshot(audio: [0.1], duration: .milliseconds(300))
+        let transcriber = WhisperKitTranscriber(engineProvider: {
+            await counter.increment()
+            try await Task.sleep(nanoseconds: 150_000_000)
+            return { _, _ in ("shared load", [0.0]) }
+        })
+
+        async let partialA = transcriber.transcribePartial(snapshot)
+        async let partialB = transcriber.transcribePartial(snapshot)
+        async let final = transcriber.transcribe(segment)
+
+        let partialResults = await [partialA, partialB]
+        let finalResult = await final
+        let count = await counter.value
+
+        XCTAssertEqual(partialResults, ["shared load", "shared load"])
+        XCTAssertEqual(finalResult.text, "shared load")
+        XCTAssertEqual(count, 1)
+    }
+
+    func testCancelledPartialDoesNotLogError() async {
+        let logger = RuntimeLogger(fileURL: logFile)
+        let snapshot = SpeechCaptureSnapshot(audio: [0.1], duration: .milliseconds(300))
+        let transcriber = WhisperKitTranscriber(engineProvider: {
+            try await Task.sleep(nanoseconds: 150_000_000)
+            return { _, _ in ("ignored", [0.0]) }
+        }, logger: logger)
+
+        let task = Task { await transcriber.transcribePartial(snapshot) }
+        task.cancel()
+        _ = await task.value
+
+        XCTAssertFalse(readLog().contains("partial transcription failed: CancellationError()"))
+    }
+
     func testTranscribeTrimsWhitespace() async {
         let segment = SpeechSegment(audio: [], silenceBefore: .zero, duration: .zero)
         let transcriber = WhisperKitTranscriber(engineProvider: {

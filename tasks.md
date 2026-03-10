@@ -14,7 +14,7 @@
 - passes: true
 - ac:
   - First-launch flow can present the exact managed zsh integration block before writing to ~/.zshrc
-  - Install appends the marked block idempotently and creates the session registry directory layout under ~/.config/egregore/
+  - Install appends or refreshes the marked block idempotently and creates the session registry/activity directory layout under ~/.config/egregore/
   - Uninstall removes the managed block from ~/.zshrc and deletes Egregore shell integration state
 - verify: swift test --filter ShellIntegrationInstallerTests
 
@@ -23,7 +23,7 @@
 - deps: Task 1, Task 2
 - passes: true
 - ac:
-  - OutputManager resolves the frontmost application, finds a registered shell session, and writes to its pipe without exposing process-tree or pipe details to callers
+  - OutputManager resolves the frontmost application, ranks registered shell sessions by recent activity, and writes to the best candidate pipe without exposing process-tree or pipe details to callers
   - append writes inject messages that preserve space-separated buffer concatenation semantics across repeated calls
   - clear resets the buffer and send emits a Return keystroke path without re-injecting text
 - verify: swift test --filter OutputManagerTests
@@ -44,7 +44,7 @@
 - passes: true
 - ac:
   - The transcriber stores the Core ML Whisper model under ~/.local/share/egregore/models/
-  - First transcription triggers lazy download and compile when the model is missing, while later transcriptions reuse the cached model
+  - App startup can begin a shared background model prewarm/download when the model is missing, and concurrent partial/final requests reuse the same in-flight load instead of stampeding model setup
   - Transcription results return text, confidence, and original segment timing metadata without leaking WhisperKit internals
 - verify: swift test --filter WhisperKitTranscriberTests
 

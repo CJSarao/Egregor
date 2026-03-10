@@ -41,6 +41,7 @@ final class AppRuntime: ObservableObject {
     private let controller: SessionController
     private let hudController: HUDWindowController
     private let hotkeyManager: NSEventHotkeyManager
+    private let transcriber: WhisperKitTranscriber
 
     init() {
         let bindings = HotkeyBindings.default
@@ -49,6 +50,7 @@ final class AppRuntime: ObservableObject {
         self.hotkeyManager = hotkeys
         let pipeline = AVAudioEnginePipeline()
         let transcriber = WhisperKitTranscriber()
+        self.transcriber = transcriber
         let resolver = EgregoreIntentResolver()
         let output = ShellOutputManager()
         let controller = SessionController(
@@ -64,6 +66,7 @@ final class AppRuntime: ObservableObject {
         refreshStatus()
         hudController.show()
         RuntimeLogger.shared.log("Egregore started — mic: \(microphoneStatus.rawValue), accessibility: \(accessibilityTrusted), shell: \(shellIntegrationInstalled)")
+        Task { await transcriber.prepare() }
         Task { await controller.start() }
     }
 

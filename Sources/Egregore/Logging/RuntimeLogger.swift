@@ -54,6 +54,10 @@ final class RuntimeLogger: Sendable {
         }
     }
 
+    static func timestampString(for date: Date) -> String {
+        formatter.string(from: date)
+    }
+
     enum Category: String, Sendable {
         case general
         case hotkey

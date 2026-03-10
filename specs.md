@@ -75,6 +75,7 @@ For any significant abstraction, consider at least two approaches before committ
 | Hotkeys | `KeyboardShortcuts` (sindresorhus) | Wraps NSEvent global monitors |
 | Shell integration | ZLE fd watcher (zsh) | Terminal-agnostic, shell-level |
 | Session registry | `~/.config/egregore/sessions/` | Per-session pipe registration |
+| Session activity | `~/.config/egregore/activity/` | Per-session last-active markers for focused-shell selection |
 
 ### Dependencies Policy
 Only WhisperKit and KeyboardShortcuts are permitted as third-party dependencies. Any addition requires explicit justification against implementing the functionality directly.
@@ -213,7 +214,7 @@ struct TranscriptionResult {
 }
 ```
 
-Hides: WhisperKit initialization, model loading, Core ML scheduling, lazy warmup, model path resolution, and snapshot decoding. Callers submit in-progress capture snapshots for live HUD transcript updates and receive a single final result when an utterance completes.
+Hides: WhisperKit initialization, model loading, shared in-flight load coordination, background prewarm, Core ML scheduling, model path resolution, and snapshot decoding. Callers submit in-progress capture snapshots for live HUD transcript updates and receive a single final result when an utterance completes.
 
 ---
 
@@ -250,13 +251,13 @@ protocol OutputManager {
 }
 ```
 
-Hides: session registry lookup, process tree walking, pipe path resolution, ZLE wire protocol, shell pipe I/O. Three operations, no implementation details exposed.
+Hides: session registry lookup, recent-session activity ranking, process tree walking, pipe path resolution, ZLE wire protocol, shell pipe I/O. Three operations, no implementation details exposed.
 
 `SessionController` always sequences these operations. They are never chained inside `OutputManager`.
 
 Each `append` call concatenates to the existing ZLE buffer (space-separated). `clear` resets to empty. This is the only mutation model — there is no replace operation.
 
-When session discovery or pipe delivery fails, `OutputManager` must emit explicit diagnostics identifying the frontmost app, matched shell PID ancestry, resolved pipe path, and whether the failure was lookup, stale registry, open, or write.
+When session discovery or pipe delivery fails, `OutputManager` must emit explicit diagnostics identifying the frontmost app, candidate shell PID ancestry, resolved pipe path, recent-activity ranking when multiple shells are present, and whether the failure was lookup, stale registry, open, or write.
 
 ---
 

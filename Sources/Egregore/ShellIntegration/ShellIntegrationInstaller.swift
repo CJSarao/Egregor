@@ -9,6 +9,7 @@ struct ShellIntegrationInstaller {
     # BEGIN Egregore integration — managed by Egregore.app
     VOICE_PIPE="/tmp/egregore-$$.pipe"
     VOICE_REGISTRY="$HOME/.config/egregore/sessions"
+    VOICE_ACTIVITY="$HOME/.config/egregore/activity"
     VOICE_DEBUG="${EGREGORE_SHELL_DEBUG:-0}"
     VOICE_DEBUG_LOG="${EGREGORE_SHELL_DEBUG_LOG:-$HOME/.local/share/egregore/logs/shell-integration.log}"
 
@@ -18,11 +19,17 @@ struct ShellIntegrationInstaller {
         print -r -- "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] [shell] $1" >> "$VOICE_DEBUG_LOG"
     }
 
+    _egregore_mark_active() {
+        mkdir -p "$VOICE_ACTIVITY"
+        print -r -- "${EPOCHREALTIME:-0}" > "$VOICE_ACTIVITY/$$"
+    }
+
     mkfifo "$VOICE_PIPE" 2>/dev/null
     exec {VOICE_FD}<>"$VOICE_PIPE"
     mkdir -p "$VOICE_REGISTRY"
     echo "$VOICE_PIPE" > "$VOICE_REGISTRY/$$"
-    trap "rm -f '$VOICE_REGISTRY/$$' '$VOICE_PIPE'" EXIT
+    _egregore_mark_active
+    trap "rm -f '$VOICE_REGISTRY/$$' '$VOICE_ACTIVITY/$$' '$VOICE_PIPE'" EXIT
     typeset -g EGREGORE_PENDING_ACTION=""
     typeset -g EGREGORE_PENDING_TEXT=""
     _egregore_debug "registered pid=$$ pipe=$VOICE_PIPE registry=$VOICE_REGISTRY fd=$VOICE_FD"
@@ -32,12 +39,14 @@ struct ShellIntegrationInstaller {
             inject)
                 BUFFER="${BUFFER:+$BUFFER }$EGREGORE_PENDING_TEXT"
                 CURSOR=${#BUFFER}
+                _egregore_mark_active
                 zle -R
                 _egregore_debug "inject applied after_len=${#BUFFER} after_buffer<<<$BUFFER>>> after_cursor=$CURSOR"
                 ;;
             clear)
                 BUFFER=""
                 CURSOR=0
+                _egregore_mark_active
                 zle -R
                 _egregore_debug "clear applied after_len=${#BUFFER} after_buffer<<<$BUFFER>>> after_cursor=$CURSOR"
                 ;;
@@ -65,20 +74,26 @@ struct ShellIntegrationInstaller {
     zle -N _egregore_apply_pending
     zle -N _egregore_inject
     zle -F $VOICE_FD _egregore_inject
+    autoload -Uz add-zsh-hook add-zle-hook-widget
+    add-zsh-hook precmd _egregore_mark_active
+    add-zle-hook-widget line-init _egregore_mark_active
     # END Egregore integration
     """#
 
     let zshrcURL: URL
     let registryURL: URL
+    let activityURL: URL
     let egregoreConfigURL: URL
 
     init(
         zshrcURL: URL = URL.homeDirectory.appending(path: ".zshrc"),
         registryURL: URL = URL.homeDirectory.appending(path: ".config/egregore/sessions"),
+        activityURL: URL = URL.homeDirectory.appending(path: ".config/egregore/activity"),
         egregoreConfigURL: URL = URL.homeDirectory.appending(path: ".config/egregore")
     ) {
         self.zshrcURL = zshrcURL
         self.registryURL = registryURL
+        self.activityURL = activityURL
         self.egregoreConfigURL = egregoreConfigURL
     }
 
@@ -88,17 +103,19 @@ struct ShellIntegrationInstaller {
     }
 
     func install() throws {
+        let fm = FileManager.default
         try FileManager.default.createDirectory(at: registryURL, withIntermediateDirectories: true)
-        guard !isInstalled else { return }
-
-        let block = "\n\n" + Self.snippet + "\n"
-        if FileManager.default.fileExists(atPath: zshrcURL.path) {
-            let handle = try FileHandle(forWritingTo: zshrcURL)
-            defer { try? handle.close() }
-            handle.seekToEndOfFile()
-            handle.write(Data(block.utf8))
+        try FileManager.default.createDirectory(at: activityURL, withIntermediateDirectories: true)
+        if fm.fileExists(atPath: zshrcURL.path) {
+            let content = try String(contentsOf: zshrcURL, encoding: .utf8)
+            let preserved = content.contains(Self.beginMarker) ? removeBlock(from: content) : content
+            let trimmed = preserved.trimmingCharacters(in: .newlines)
+            let updated = trimmed.isEmpty
+                ? Self.snippet + "\n"
+                : trimmed + "\n\n" + Self.snippet + "\n"
+            try updated.write(to: zshrcURL, atomically: true, encoding: .utf8)
         } else {
-            try block.write(to: zshrcURL, atomically: true, encoding: .utf8)
+            try (Self.snippet + "\n").write(to: zshrcURL, atomically: true, encoding: .utf8)
         }
     }
 

@@ -29,6 +29,9 @@ struct MenuBarView: View {
                     runtime.installShellIntegration()
                 }
             } else {
+                Button("Reinstall Shell Integration") {
+                    runtime.installShellIntegration()
+                }
                 Button("Uninstall Shell Integration") {
                     runtime.uninstallShellIntegration()
                 }

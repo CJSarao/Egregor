@@ -3,13 +3,24 @@ import Darwin
 @testable import Egregore
 
 final class ShellPTYIntegrationTests: XCTestCase {
+    func testInteractiveZshInjectPopulatesNormalPromptBuffer() throws {
+        let harness = try InteractiveZshHarness()
+        defer { harness.shutdown() }
+
+        try harness.sendPipeMessage("inject|echo PROMPT_BUFFER_OK\n")
+        XCTAssertTrue(try harness.waitForDebugLog(containing: "inject applied after_len=21 after_buffer<<<echo PROMPT_BUFFER_OK>>>").contains("after_cursor=21"))
+        try harness.pressReturn()
+
+        XCTAssertTrue(try harness.waitForOutput(containing: "PROMPT_BUFFER_OK").contains("PROMPT_BUFFER_OK"))
+    }
+
     func testInteractiveZshInjectPopulatesInteractiveEditorBuffer() throws {
         let harness = try InteractiveZshHarness()
         defer { harness.shutdown() }
 
         try harness.startEditor(variableName: "egregore_value")
         try harness.sendPipeMessage("inject|hello world\n")
-        try harness.acceptEditor()
+        try harness.pressReturn()
 
         XCTAssertTrue(try harness.waitForOutput(containing: "RESULT<<<hello world>>>").contains("RESULT<<<hello world>>>"))
         XCTAssertTrue(try harness.waitForDebugLog(containing: "inject applied after_len=11 after_buffer<<<hello world>>>").contains("after_cursor=11"))
@@ -96,7 +107,7 @@ private final class InteractiveZshHarness {
         _ = try waitForOutput(containing: "EDIT> ")
     }
 
-    func acceptEditor() throws {
+    func pressReturn() throws {
         try sendInput("\n")
     }
 

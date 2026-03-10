@@ -10,6 +10,7 @@ actor WhisperKitTranscriber: Transcriber {
 
     private let engineProvider: @Sendable () async throws -> Engine
     private var engine: Engine?
+    private var engineLoadTask: Task<Engine, Error>?
     private let progressHandler: ((Double) -> Void)?
     private let log: RuntimeLogger
 
@@ -42,6 +43,8 @@ actor WhisperKitTranscriber: Transcriber {
                 log.log("partial transcription: duration=\(snapshot.duration) chars=\(trimmed.count)", category: .transcriber)
             }
             return trimmed
+        } catch is CancellationError {
+            return ""
         } catch {
             log.error("partial transcription failed: \(error)", category: .transcriber)
             return ""
@@ -63,13 +66,34 @@ actor WhisperKitTranscriber: Transcriber {
         }
     }
 
+    func prepare() async {
+        do {
+            _ = try await loadedEngine()
+        } catch {
+            log.error("engine prewarm failed: \(error)", category: .transcriber)
+        }
+    }
+
     private func loadedEngine() async throws -> Engine {
         if let engine { return engine }
+        if let engineLoadTask {
+            return try await engineLoadTask.value
+        }
+
         log.log("loading WhisperKit engine (model: \(Self.modelVariant), storage: \(Self.modelStorageURL.path()))", category: .transcriber)
-        let e = try await engineProvider()
-        log.log("WhisperKit engine loaded", category: .transcriber)
-        engine = e
-        return e
+        let task = Task { try await engineProvider() }
+        engineLoadTask = task
+
+        do {
+            let e = try await task.value
+            engine = e
+            engineLoadTask = nil
+            log.log("WhisperKit engine loaded", category: .transcriber)
+            return e
+        } catch {
+            engineLoadTask = nil
+            throw error
+        }
     }
 
     // exp(mean_avgLogprob) maps log-prob domain to [0,1]: log(1)=0→confidence 1.0, lower log-probs→lower confidence

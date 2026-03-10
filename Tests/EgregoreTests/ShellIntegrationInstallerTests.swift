@@ -28,13 +28,17 @@ final class ShellIntegrationInstallerTests: XCTestCase {
         XCTAssertTrue(s.contains("END Egregore integration"))
         XCTAssertTrue(s.contains("VOICE_PIPE"))
         XCTAssertTrue(s.contains("VOICE_REGISTRY"))
+        XCTAssertTrue(s.contains("VOICE_ACTIVITY"))
         XCTAssertTrue(s.contains("VOICE_DEBUG"))
         XCTAssertTrue(s.contains("VOICE_DEBUG_LOG"))
         XCTAssertTrue(s.contains("_egregore_debug"))
+        XCTAssertTrue(s.contains("_egregore_mark_active"))
         XCTAssertTrue(s.contains("_egregore_inject"))
         XCTAssertTrue(s.contains("inject)"))
         XCTAssertTrue(s.contains("clear)"))
         XCTAssertTrue(s.contains("zle -F"))
+        XCTAssertTrue(s.contains("add-zsh-hook"))
+        XCTAssertTrue(s.contains("add-zle-hook-widget"))
     }
 
     func testIsInstalledReturnsFalseWhenNoZshrc() {
@@ -44,6 +48,11 @@ final class ShellIntegrationInstallerTests: XCTestCase {
     func testInstallCreatesRegistryDirectory() throws {
         try installer.install()
         XCTAssertTrue(FileManager.default.fileExists(atPath: installer.registryURL.path))
+    }
+
+    func testInstallCreatesActivityDirectory() throws {
+        try installer.install()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: installer.activityURL.path))
     }
 
     func testInstallCreatesZshrcIfMissing() throws {
@@ -66,6 +75,22 @@ final class ShellIntegrationInstallerTests: XCTestCase {
         try installer.install()
         let content = try String(contentsOf: installer.zshrcURL, encoding: .utf8)
         XCTAssertEqual(content.components(separatedBy: "BEGIN Egregore integration").count - 1, 1)
+    }
+
+    func testInstallRefreshesManagedBlockWhenAlreadyPresent() throws {
+        let oldSnippet = """
+        # BEGIN Egregore integration — managed by Egregore.app
+        VOICE_PIPE="/tmp/old.pipe"
+        # END Egregore integration
+        """
+        try oldSnippet.write(to: installer.zshrcURL, atomically: true, encoding: .utf8)
+
+        try installer.install()
+
+        let content = try String(contentsOf: installer.zshrcURL, encoding: .utf8)
+        XCTAssertEqual(content.components(separatedBy: "BEGIN Egregore integration").count - 1, 1)
+        XCTAssertTrue(content.contains("VOICE_ACTIVITY"))
+        XCTAssertFalse(content.contains("/tmp/old.pipe"))
     }
 
     func testIsInstalledAfterInstall() throws {

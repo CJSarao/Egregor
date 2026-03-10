@@ -3,6 +3,11 @@ import CoreGraphics
 import Darwin
 
 final class ShellOutputManager: OutputManager {
+    struct FrontmostApplicationInfo {
+        let pid: pid_t
+        let name: String
+    }
+
     private struct SessionTarget {
         let pipePath: String
         let shellPID: pid_t?
@@ -15,15 +20,30 @@ final class ShellOutputManager: OutputManager {
         let pipePath: String
         let shellPID: pid_t
         let ancestry: [pid_t]
+        let lastActivity: Date?
     }
 
     private let sessionResolver: () -> SessionTarget?
     private let log: RuntimeLogger
 
     init(registryURL: URL = URL.homeDirectory.appending(path: ".config/egregore/sessions"),
+         activityURL: URL = URL.homeDirectory.appending(path: ".config/egregore/activity"),
+         frontmostApplicationProvider: @escaping () -> FrontmostApplicationInfo? = {
+             guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+             return FrontmostApplicationInfo(pid: pid_t(app.processIdentifier), name: app.localizedName ?? "unknown")
+         },
+         childPIDProvider: @escaping (pid_t) -> [pid_t] = ShellOutputManager.childPIDs(of:),
          logger: RuntimeLogger = .shared) {
         self.log = logger
-        self.sessionResolver = { ShellOutputManager.resolveSession(registryURL: registryURL, logger: logger) }
+        self.sessionResolver = {
+            ShellOutputManager.resolveSession(
+                registryURL: registryURL,
+                activityURL: activityURL,
+                frontmostApplicationProvider: frontmostApplicationProvider,
+                childPIDProvider: childPIDProvider,
+                logger: logger
+            )
+        }
     }
 
     init(sessionResolver: @escaping () -> String?, logger: RuntimeLogger = .shared) {
@@ -111,24 +131,37 @@ final class ShellOutputManager: OutputManager {
         }
     }
 
-    private static func resolveSession(registryURL: URL, logger: RuntimeLogger) -> SessionTarget? {
-        guard let frontApp = NSWorkspace.shared.frontmostApplication else {
+    private static func resolveSession(
+        registryURL: URL,
+        activityURL: URL,
+        frontmostApplicationProvider: () -> FrontmostApplicationInfo?,
+        childPIDProvider: (pid_t) -> [pid_t],
+        logger: RuntimeLogger
+    ) -> SessionTarget? {
+        guard let frontApp = frontmostApplicationProvider() else {
             logger.error("session resolve: no frontmost application", category: .output)
             return nil
         }
-        let frontPID = frontApp.processIdentifier
-        let appName = frontApp.localizedName ?? "unknown"
+        let frontPID = frontApp.pid
+        let appName = frontApp.name
         logger.log("session resolve: frontmost app=\(appName) PID=\(frontPID)", category: .output)
-        let result = findRegisteredShell(from: pid_t(frontPID), ancestry: [pid_t(frontPID)], registryURL: registryURL, logger: logger)
-        if let match = result {
+        let matches = findRegisteredShells(
+            from: frontPID,
+            ancestry: [frontPID],
+            registryURL: registryURL,
+            activityURL: activityURL,
+            childPIDProvider: childPIDProvider,
+            logger: logger
+        )
+        if let match = chooseBestMatch(matches, logger: logger) {
             logger.log(
-                "session resolve: found pipe \(match.pipePath) for shell PID \(match.shellPID) via ancestry \(describe(match.ancestry))",
+                "session resolve: found pipe \(match.pipePath) for shell PID \(match.shellPID) via ancestry \(describe(match.ancestry)) activity=\(describe(match.lastActivity))",
                 category: .output
             )
             return SessionTarget(
                 pipePath: match.pipePath,
                 shellPID: match.shellPID,
-                frontmostAppPID: pid_t(frontPID),
+                frontmostAppPID: frontPID,
                 frontmostAppName: appName,
                 ancestry: match.ancestry
             )
@@ -138,7 +171,15 @@ final class ShellOutputManager: OutputManager {
         return nil
     }
 
-    private static func findRegisteredShell(from pid: pid_t, ancestry: [pid_t], registryURL: URL, logger: RuntimeLogger) -> SessionMatch? {
+    private static func findRegisteredShells(
+        from pid: pid_t,
+        ancestry: [pid_t],
+        registryURL: URL,
+        activityURL: URL,
+        childPIDProvider: (pid_t) -> [pid_t],
+        logger: RuntimeLogger
+    ) -> [SessionMatch] {
+        var matches: [SessionMatch] = []
         let sessionFile = registryURL.appending(path: "\(pid)")
         if let path = try? String(contentsOf: sessionFile, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines) {
@@ -147,20 +188,69 @@ final class ShellOutputManager: OutputManager {
             } else if !FileManager.default.fileExists(atPath: path) {
                 logger.error("session resolve: stale registry entry PID \(pid) → \(path) via ancestry \(describe(ancestry))", category: .output)
             } else {
-                logger.log("session resolve: matched PID \(pid) via ancestry \(describe(ancestry)) → \(path)", category: .output)
-                return SessionMatch(pipePath: path, shellPID: pid, ancestry: ancestry)
+                let lastActivity = readLastActivity(for: pid, activityURL: activityURL)
+                logger.log(
+                    "session resolve: matched PID \(pid) via ancestry \(describe(ancestry)) → \(path) activity=\(describe(lastActivity))",
+                    category: .output
+                )
+                matches.append(SessionMatch(pipePath: path, shellPID: pid, ancestry: ancestry, lastActivity: lastActivity))
             }
         }
-        let children = childPIDs(of: pid)
+        let children = childPIDProvider(pid)
         if !children.isEmpty {
             logger.log("session resolve: PID \(pid) has children \(children) via ancestry \(describe(ancestry))", category: .output)
         }
         for child in children {
-            if let found = findRegisteredShell(from: child, ancestry: ancestry + [child], registryURL: registryURL, logger: logger) {
-                return found
-            }
+            matches += findRegisteredShells(
+                from: child,
+                ancestry: ancestry + [child],
+                registryURL: registryURL,
+                activityURL: activityURL,
+                childPIDProvider: childPIDProvider,
+                logger: logger
+            )
         }
-        return nil
+        return matches
+    }
+
+    private static func chooseBestMatch(_ matches: [SessionMatch], logger: RuntimeLogger) -> SessionMatch? {
+        guard !matches.isEmpty else { return nil }
+        if matches.count > 1 {
+            let summary = matches
+                .sorted {
+                    if $0.lastActivity != $1.lastActivity {
+                        return ($0.lastActivity ?? .distantPast) > ($1.lastActivity ?? .distantPast)
+                    }
+                    if $0.ancestry.count != $1.ancestry.count {
+                        return $0.ancestry.count > $1.ancestry.count
+                    }
+                    return $0.shellPID < $1.shellPID
+                }
+                .map { "pid=\($0.shellPID) activity=\(describe($0.lastActivity)) ancestry=\(describe($0.ancestry))" }
+                .joined(separator: "; ")
+            logger.log("session resolve: candidates \(summary)", category: .output)
+        }
+        return matches.max {
+            let lhsActivity = $0.lastActivity ?? .distantPast
+            let rhsActivity = $1.lastActivity ?? .distantPast
+            if lhsActivity != rhsActivity {
+                return lhsActivity < rhsActivity
+            }
+            if $0.ancestry.count != $1.ancestry.count {
+                return $0.ancestry.count < $1.ancestry.count
+            }
+            return $0.shellPID > $1.shellPID
+        }
+    }
+
+    private static func readLastActivity(for pid: pid_t, activityURL: URL) -> Date? {
+        let fileURL = activityURL.appending(path: "\(pid)")
+        guard let value = try? String(contentsOf: fileURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              let seconds = Double(value) else {
+            return nil
+        }
+        return Date(timeIntervalSince1970: seconds)
     }
 
     private static func childPIDs(of parentPID: pid_t) -> [pid_t] {
@@ -179,6 +269,11 @@ final class ShellOutputManager: OutputManager {
 
     private static func describe(_ value: String?) -> String {
         value ?? "unknown"
+    }
+
+    private static func describe(_ value: Date?) -> String {
+        guard let value else { return "unknown" }
+        return RuntimeLogger.timestampString(for: value)
     }
 
     private static func describe(_ ancestry: [pid_t]) -> String {
