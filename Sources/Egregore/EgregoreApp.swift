@@ -3,7 +3,7 @@ import SwiftUI
 @main
 struct EgregoreApp: App {
     init() {
-        NSApp.setActivationPolicy(.accessory)
+        NSApplication.shared.setActivationPolicy(.accessory)
     }
 
     var body: some Scene {
