@@ -91,7 +91,7 @@
 ## Task 10
 - desc: Add proof-oriented property and end-to-end tests that map directly to the spec milestones and run in CI without microphone hardware
 - deps: Task 3, Task 4, Task 5, Task 8
-- passes: false
+- passes: true
 - ac:
   - Property-based tests cover IntentResolver command matching, non-command rejection, low-confidence discard behavior, and OutputManager buffer semantics
   - End-to-end tests exercise transcriber, resolver, output formatting, and full mocked pipeline flows without requiring audio hardware
