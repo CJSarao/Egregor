@@ -29,7 +29,7 @@ struct ShellIntegrationInstaller {
     mkdir -p "$VOICE_REGISTRY"
     echo "$VOICE_PIPE" > "$VOICE_REGISTRY/$$"
     _egregore_mark_active
-    trap "rm -f '$VOICE_REGISTRY/$$' '$VOICE_ACTIVITY/$$' '$VOICE_PIPE'" EXIT
+    trap "exec {VOICE_FD}<&-; rm -f '$VOICE_REGISTRY/$$' '$VOICE_ACTIVITY/$$' '$VOICE_PIPE'" EXIT
     typeset -g EGREGORE_PENDING_ACTION=""
     typeset -g EGREGORE_PENDING_TEXT=""
     _egregore_debug "registered pid=$$ pipe=$VOICE_PIPE registry=$VOICE_REGISTRY fd=$VOICE_FD"
@@ -57,15 +57,19 @@ struct ShellIntegrationInstaller {
     }
 
     _egregore_inject() {
-        local action text
+        local action text line
         local before_buffer="$BUFFER"
         local before_cursor="$CURSOR"
         _egregore_debug "handler entry fd=$VOICE_FD before_len=${#before_buffer} before_buffer<<<$before_buffer>>> before_cursor=$before_cursor"
-        IFS='|' read -r action text <&$VOICE_FD || {
+        IFS= read -r line <&$VOICE_FD || {
             _egregore_debug "read failed fd=$VOICE_FD"
-            return 1
+            return 0
         }
+        [[ -z "$line" ]] && return 0
+        action="${line%%|*}"
+        text="${line#*|}"
         _egregore_debug "message action=${action:-<empty>} text_len=${#text} text<<<$text>>>"
+        [[ -z "$action" ]] && return 0
         EGREGORE_PENDING_ACTION="$action"
         EGREGORE_PENDING_TEXT="$text"
         zle _egregore_apply_pending

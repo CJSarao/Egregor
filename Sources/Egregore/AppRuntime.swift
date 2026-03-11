@@ -33,6 +33,13 @@ final class AppRuntime: ObservableObject {
     @Published private(set) var lastError: String?
     @Published var showsShellSnippet = false
     @Published private(set) var keyDiagnosticsEnabled = false
+    @Published var showsSetup = false
+
+    private static let hasCompletedSetupKey = "egregore.hasCompletedSetup"
+
+    var needsSetup: Bool {
+        !shellIntegrationInstalled || microphoneStatus != .authorized || !accessibilityTrusted
+    }
 
     let shellSnippet = ShellIntegrationInstaller.snippet
     let hotkeyBindings: HotkeyBindings
@@ -42,6 +49,7 @@ final class AppRuntime: ObservableObject {
     private let hudController: HUDWindowController
     private let hotkeyManager: NSEventHotkeyManager
     private let transcriber: WhisperKitTranscriber
+    private var accessibilityTimer: Timer?
 
     init() {
         let bindings = HotkeyBindings.default
@@ -64,6 +72,12 @@ final class AppRuntime: ObservableObject {
         self.controller = controller
         self.hudController = HUDWindowController(hudStates: controller.hudStates)
         refreshStatus()
+        if !UserDefaults.standard.bool(forKey: Self.hasCompletedSetupKey) || needsSetup {
+            showsSetup = true
+        }
+        if !accessibilityTrusted {
+            startAccessibilityPolling()
+        }
         hudController.show()
         RuntimeLogger.shared.log("Egregore started — mic: \(microphoneStatus.rawValue), accessibility: \(accessibilityTrusted), shell: \(shellIntegrationInstalled)")
         Task { await transcriber.prepare() }
@@ -104,8 +118,31 @@ final class AppRuntime: ObservableObject {
         }
     }
 
+    func completeSetup() {
+        UserDefaults.standard.set(true, forKey: Self.hasCompletedSetupKey)
+        showsSetup = false
+    }
+
+    func openAccessibilitySettings() {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+    }
+
     func clearError() {
         lastError = nil
+    }
+
+    private func startAccessibilityPolling() {
+        accessibilityTimer?.invalidate()
+        accessibilityTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] timer in
+            Task { @MainActor in
+                guard let self else { timer.invalidate(); return }
+                self.accessibilityTrusted = AXIsProcessTrusted()
+                if self.accessibilityTrusted {
+                    timer.invalidate()
+                    self.accessibilityTimer = nil
+                }
+            }
+        }
     }
 
     func setKeyDiagnostics(_ enabled: Bool) {

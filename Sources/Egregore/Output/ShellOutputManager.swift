@@ -33,6 +33,7 @@ final class ShellOutputManager: OutputManager {
              return FrontmostApplicationInfo(pid: pid_t(app.processIdentifier), name: app.localizedName ?? "unknown")
          },
          childPIDProvider: @escaping (pid_t) -> [pid_t] = ShellOutputManager.childPIDs(of:),
+         visibleWindowPIDsProvider: @escaping () -> Set<pid_t> = ShellOutputManager.visibleWindowOwnerPIDs,
          logger: RuntimeLogger = .shared) {
         self.log = logger
         self.sessionResolver = {
@@ -41,6 +42,7 @@ final class ShellOutputManager: OutputManager {
                 activityURL: activityURL,
                 frontmostApplicationProvider: frontmostApplicationProvider,
                 childPIDProvider: childPIDProvider,
+                visibleWindowPIDsProvider: visibleWindowPIDsProvider,
                 logger: logger
             )
         }
@@ -66,8 +68,14 @@ final class ShellOutputManager: OutputManager {
     func send() {
         log.log("send (Return keystroke)", category: .output)
         if !AXIsProcessTrusted() {
-            log.error("send: Accessibility not trusted — CGEvent posting will likely be blocked by macOS", category: .output)
+            log.error("send: Accessibility not trusted — keystroke will be silently dropped", category: .output)
+            return
         }
+        guard let target = sessionResolver() else {
+            log.error("send failed: no registered shell session found", category: .output)
+            return
+        }
+        log.log("send: targeting shell PID=\(Self.describe(target.shellPID)) frontApp=\(Self.describe(target.frontmostAppName))", category: .output)
         let src = CGEventSource(stateID: .hidSystemState)
         guard let down = CGEvent(keyboardEventSource: src, virtualKey: 0x24, keyDown: true),
               let up = CGEvent(keyboardEventSource: src, virtualKey: 0x24, keyDown: false) else {
@@ -76,7 +84,7 @@ final class ShellOutputManager: OutputManager {
         }
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
-        log.log("send: Return keystroke posted", category: .output)
+        log.log("send: Return keystroke posted for shell PID=\(Self.describe(target.shellPID))", category: .output)
     }
 
     private func writeToPipe(action: String, text: String) {
@@ -136,6 +144,7 @@ final class ShellOutputManager: OutputManager {
         activityURL: URL,
         frontmostApplicationProvider: () -> FrontmostApplicationInfo?,
         childPIDProvider: (pid_t) -> [pid_t],
+        visibleWindowPIDsProvider: () -> Set<pid_t>,
         logger: RuntimeLogger
     ) -> SessionTarget? {
         guard let frontApp = frontmostApplicationProvider() else {
@@ -145,6 +154,11 @@ final class ShellOutputManager: OutputManager {
         let frontPID = frontApp.pid
         let appName = frontApp.name
         logger.log("session resolve: frontmost app=\(appName) PID=\(frontPID)", category: .output)
+        let visiblePIDs = visibleWindowPIDsProvider()
+        guard visiblePIDs.isEmpty || visiblePIDs.contains(frontPID) else {
+            logger.error("session resolve: frontmost app \(appName) PID \(frontPID) not visible on current space, skipping", category: .output)
+            return nil
+        }
         let matches = findRegisteredShells(
             from: frontPID,
             ancestry: [frontPID],
@@ -261,6 +275,24 @@ final class ShellOutputManager: OutputManager {
         var procs = [kinfo_proc](repeating: kinfo_proc(), count: count)
         sysctl(&mib, 4, &procs, &size, nil, 0)
         return procs.filter { $0.kp_eproc.e_ppid == parentPID }.map { $0.kp_proc.p_pid }
+    }
+
+    private static func visibleWindowOwnerPIDs() -> Set<pid_t> {
+        guard let windowList = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]] else {
+            return []
+        }
+        var pids = Set<pid_t>()
+        for entry in windowList {
+            if let pid = entry[kCGWindowOwnerPID as String] as? pid_t,
+               let layer = entry[kCGWindowLayer as String] as? Int,
+               layer == 0 {
+                pids.insert(pid)
+            }
+        }
+        return pids
     }
 
     private static func describe(_ pid: pid_t?) -> String {

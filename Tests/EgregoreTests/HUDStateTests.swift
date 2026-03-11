@@ -367,4 +367,42 @@ final class HUDStateTests: XCTestCase {
         XCTAssertEqual(compact.midX, screen.midX, accuracy: 0.5)
         XCTAssertEqual(expanded.midX, screen.midX, accuracy: 0.5)
     }
+
+    // MARK: - Anchored frame calculation for various screen sizes
+
+    func testAnchoredFrameCalculationForVariousScreenSizes() {
+        let screens: [(CGRect, String)] = [
+            (CGRect(x: 0, y: 0, width: 1920, height: 1080), "1080p"),
+            (CGRect(x: 0, y: 0, width: 2560, height: 1440), "1440p"),
+            (CGRect(x: 0, y: 0, width: 3840, height: 2160), "4K"),
+            (CGRect(x: 0, y: 23, width: 1440, height: 877), "MacBook with menu bar offset"),
+            (CGRect(x: 1440, y: 0, width: 1920, height: 1080), "external monitor offset"),
+        ]
+
+        for (screenFrame, label) in screens {
+            let frame = HUDWindowController.anchoredFrame(screenFrame: screenFrame)
+
+            XCTAssertEqual(frame.width, HUDWindowController.width, "\(label): width")
+            XCTAssertEqual(frame.height, HUDWindowController.height, "\(label): height")
+            XCTAssertEqual(frame.minY, screenFrame.minY + HUDWindowController.bottomMargin,
+                           "\(label): bottom margin from screen origin")
+            XCTAssertEqual(frame.midX, screenFrame.midX, accuracy: 0.5,
+                           "\(label): horizontal center")
+        }
+    }
+
+    func testAnchoredFrameProducesCorrectResultsForDifferentScreenFrames() {
+        let small = CGRect(x: 0, y: 0, width: 1280, height: 720)
+        let large = CGRect(x: 0, y: 0, width: 3840, height: 2160)
+
+        let smallFrame = HUDWindowController.anchoredFrame(screenFrame: small)
+        let largeFrame = HUDWindowController.anchoredFrame(screenFrame: large)
+
+        XCTAssertEqual(smallFrame.minY, largeFrame.minY,
+                       "bottom margin identical regardless of screen size")
+        XCTAssertNotEqual(smallFrame.midX, largeFrame.midX,
+                          "horizontal center differs for different widths")
+        XCTAssertEqual(smallFrame.midX, small.midX, accuracy: 0.5)
+        XCTAssertEqual(largeFrame.midX, large.midX, accuracy: 0.5)
+    }
 }

@@ -7,9 +7,15 @@ struct MenuBarView: View {
         VStack(alignment: .leading, spacing: 10) {
             header
             Divider()
+
+            if runtime.showsSetup {
+                setupSection
+                Divider()
+            }
+
             statusLine("Shell integration", runtime.shellIntegrationInstalled ? "Installed" : "Missing")
             statusLine("Microphone", runtime.microphoneStatus.rawValue)
-            statusLine("Accessibility", runtime.accessibilityTrusted ? "Granted" : "Needs review")
+            statusLine("Accessibility", runtime.accessibilityTrusted ? "Granted" : "Not Granted — required for ROGER")
 
             if let lastError = runtime.lastError {
                 Text(lastError)
@@ -34,6 +40,12 @@ struct MenuBarView: View {
                 }
                 Button("Uninstall Shell Integration") {
                     runtime.uninstallShellIntegration()
+                }
+            }
+
+            if !runtime.accessibilityTrusted {
+                Button("Open Accessibility Settings") {
+                    runtime.openAccessibilitySettings()
                 }
             }
 
@@ -88,6 +100,80 @@ struct MenuBarView: View {
             Text("Session runtime active")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private var setupSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Setup")
+                .font(.system(size: 12, weight: .semibold))
+
+            setupStep(
+                number: 1,
+                title: "Microphone",
+                status: runtime.microphoneStatus == .authorized ? "Granted" : runtime.microphoneStatus.rawValue,
+                done: runtime.microphoneStatus == .authorized
+            ) {
+                if runtime.microphoneStatus == .notDetermined {
+                    Button("Request Access") { runtime.requestMicrophoneAccess() }
+                }
+            }
+
+            setupStep(
+                number: 2,
+                title: "Accessibility",
+                status: runtime.accessibilityTrusted ? "Granted" : "Required",
+                done: runtime.accessibilityTrusted
+            ) {
+                if !runtime.accessibilityTrusted {
+                    Button("Open System Settings") { runtime.openAccessibilitySettings() }
+                }
+            }
+
+            setupStep(
+                number: 3,
+                title: "Shell Integration",
+                status: runtime.shellIntegrationInstalled ? "Installed" : "Not installed",
+                done: runtime.shellIntegrationInstalled
+            ) {
+                if !runtime.shellIntegrationInstalled {
+                    Button("Install") { runtime.installShellIntegration() }
+                }
+            }
+
+            setupStep(
+                number: 4,
+                title: "Open a new terminal tab",
+                status: "Existing shells won't pick up changes",
+                done: false
+            ) { EmptyView() }
+
+            HStack {
+                if !runtime.needsSetup {
+                    Button("Done") { runtime.completeSetup() }
+                        .buttonStyle(.borderedProminent)
+                }
+                Button("Refresh") { runtime.refreshStatus() }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func setupStep<Content: View>(number: Int, title: String, status: String, done: Bool, @ViewBuilder action: () -> Content) -> some View {
+        HStack(spacing: 6) {
+            Text(done ? "\u{2713}" : "\(number)")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(done ? .green : .secondary)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 11, weight: .medium))
+                Text(status)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            action()
         }
     }
 

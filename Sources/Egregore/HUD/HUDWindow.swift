@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 @MainActor
@@ -9,6 +10,9 @@ final class HUDWindowController {
 
     private var window: NSWindow?
     private let viewModel: HUDViewModel
+    private var screenObserver: Any?
+    private var spaceObserver: Any?
+    private var visibilitySub: AnyCancellable?
 
     init(hudStates: AsyncStream<HUDState>) {
         self.viewModel = HUDViewModel(hudStates: hudStates)
@@ -38,12 +42,33 @@ final class HUDWindowController {
         layoutWindow(panel)
         panel.orderFront(nil)
         window = panel
+
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in MainActor.assumeIsolated { self?.relayout() } }
+
+        spaceObserver = NotificationCenter.default.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in MainActor.assumeIsolated { self?.relayout() } }
+
+        visibilitySub = viewModel.$visible
+            .receive(on: RunLoop.main)
+            .sink { [weak self] visible in
+                if visible { self?.relayout() }
+            }
     }
 
     nonisolated static func anchoredFrame(screenFrame: CGRect, width: CGFloat = HUDWindowController.width, height: CGFloat = HUDWindowController.height, bottomMargin: CGFloat = HUDWindowController.bottomMargin) -> CGRect {
         let x = screenFrame.midX - width / 2
         let y = screenFrame.minY + bottomMargin
         return CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    private func relayout() {
+        guard let window else { return }
+        layoutWindow(window)
     }
 
     private func layoutWindow(_ window: NSWindow) {

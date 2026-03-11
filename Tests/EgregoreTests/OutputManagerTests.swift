@@ -1,5 +1,6 @@
 import XCTest
 import Darwin
+import ApplicationServices
 @testable import Egregore
 
 final class OutputManagerTests: XCTestCase {
@@ -19,6 +20,9 @@ final class OutputManagerTests: XCTestCase {
     }
 
     private func readAll(fd: Int32) -> String {
+        let flags = fcntl(fd, F_GETFL)
+        _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+        defer { _ = fcntl(fd, F_SETFL, flags) }
         var buffer = [UInt8](repeating: 0, count: 4096)
         let n = Darwin.read(fd, &buffer, 4095)
         return n > 0 ? String(bytes: Array(buffer.prefix(n)), encoding: .utf8) ?? "" : ""
@@ -148,6 +152,32 @@ final class OutputManagerTests: XCTestCase {
         manager.send()
     }
 
+    func testSendLogsWarningWithoutAccessibility() {
+        let logger = RuntimeLogger(fileURL: logFile)
+        let manager = ShellOutputManager(sessionResolver: { nil }, logger: logger)
+        manager.send()
+
+        let contents = readLog()
+        // In CI, AXIsProcessTrusted() returns false so we expect the early return log
+        if !AXIsProcessTrusted() {
+            XCTAssertTrue(contents.contains("Accessibility not trusted"))
+        }
+    }
+
+    func testSendReturnsEarlyWithoutSession() {
+        let logger = RuntimeLogger(fileURL: logFile)
+        let manager = ShellOutputManager(sessionResolver: { nil }, logger: logger)
+        manager.send()
+
+        let contents = readLog()
+        // If accessibility is trusted but no session, we get the session error.
+        // If not trusted, we get the accessibility error (early return before session check).
+        let hasAccessibilityError = contents.contains("Accessibility not trusted")
+        let hasSessionError = contents.contains("send failed: no registered shell session found")
+        XCTAssertTrue(hasAccessibilityError || hasSessionError,
+                      "Expected either accessibility or session error in log, got: \(contents)")
+    }
+
     func testMissingPipePathLogsDistinctError() {
         let missingPath = "/tmp/egregore-test-missing-\(UUID().uuidString).pipe"
         let logger = RuntimeLogger(fileURL: logFile)
@@ -172,6 +202,76 @@ final class OutputManagerTests: XCTestCase {
         let contents = readLog()
         XCTAssertTrue(contents.contains("textBytes=12"))
         XCTAssertFalse(contents.contains("secret-token"))
+    }
+
+    // MARK: - WS4: Visible window filtering
+
+    func testResolveSessionPrefersVisibleTerminal() throws {
+        let (visiblePath, visibleFD) = makePipe()
+        let (hiddenPath, hiddenFD) = makePipe()
+        defer {
+            Darwin.close(visibleFD)
+            Darwin.close(hiddenFD)
+            Darwin.unlink(visiblePath)
+            Darwin.unlink(hiddenPath)
+        }
+
+        try visiblePath.write(to: registryURL.appending(path: "501"), atomically: true, encoding: .utf8)
+        try hiddenPath.write(to: registryURL.appending(path: "601"), atomically: true, encoding: .utf8)
+        try "10.0".write(to: activityURL.appending(path: "501"), atomically: true, encoding: .utf8)
+        try "20.0".write(to: activityURL.appending(path: "601"), atomically: true, encoding: .utf8)
+
+        let logger = RuntimeLogger(fileURL: logFile)
+        let manager = ShellOutputManager(
+            registryURL: registryURL,
+            activityURL: activityURL,
+            frontmostApplicationProvider: { .init(pid: 400, name: "Ghostty") },
+            childPIDProvider: { pid in
+                switch pid {
+                case 400: return [501]
+                case 500: return [601]
+                default: return []
+                }
+            },
+            visibleWindowPIDsProvider: { [400] },
+            logger: logger
+        )
+
+        manager.append("visible shell")
+
+        XCTAssertEqual(readAll(fd: visibleFD), "inject|visible shell\n")
+        XCTAssertEqual(readAll(fd: hiddenFD), "")
+    }
+
+    func testNoVisibleTerminalLogsWarning() throws {
+        let (pipePath, pipeFD) = makePipe()
+        defer {
+            Darwin.close(pipeFD)
+            Darwin.unlink(pipePath)
+        }
+
+        try pipePath.write(to: registryURL.appending(path: "301"), atomically: true, encoding: .utf8)
+
+        let logger = RuntimeLogger(fileURL: logFile)
+        let manager = ShellOutputManager(
+            registryURL: registryURL,
+            activityURL: activityURL,
+            frontmostApplicationProvider: { .init(pid: 200, name: "Ghostty") },
+            childPIDProvider: { pid in
+                switch pid {
+                case 200: return [301]
+                default: return []
+                }
+            },
+            visibleWindowPIDsProvider: { [999] },
+            logger: logger
+        )
+
+        manager.append("should not arrive")
+
+        XCTAssertEqual(readAll(fd: pipeFD), "")
+        let contents = readLog()
+        XCTAssertTrue(contents.contains("not visible on current space, skipping"))
     }
 
     func testResolveSessionPrefersMostRecentlyActiveShell() throws {
@@ -202,6 +302,7 @@ final class OutputManagerTests: XCTestCase {
                 default: return []
                 }
             },
+            visibleWindowPIDsProvider: { [] },
             logger: logger
         )
 

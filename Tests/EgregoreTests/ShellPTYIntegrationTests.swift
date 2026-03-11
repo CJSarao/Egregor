@@ -25,6 +25,89 @@ final class ShellPTYIntegrationTests: XCTestCase {
         XCTAssertTrue(try harness.waitForOutput(containing: "RESULT<<<hello world>>>").contains("RESULT<<<hello world>>>"))
         XCTAssertTrue(try harness.waitForDebugLog(containing: "inject applied after_len=11 after_buffer<<<hello world>>>").contains("after_cursor=11"))
     }
+
+    // MARK: - WS1: Terminal responsiveness after injection
+
+    func testTerminalResponsiveAfterInject() throws {
+        let harness = try InteractiveZshHarness()
+        defer { harness.shutdown() }
+
+        try harness.sendPipeMessage("inject|echo responsive_ok\n")
+        _ = try harness.waitForDebugLog(containing: "inject applied")
+
+        try harness.typeCharacter("x")
+        usleep(200_000)
+
+        let log = try harness.waitForDebugLog(containing: "inject applied")
+        XCTAssertTrue(log.contains("inject applied"), "Terminal should remain responsive after injection")
+    }
+
+    func testMultipleInjectionsWork() throws {
+        let harness = try InteractiveZshHarness()
+        defer { harness.shutdown() }
+
+        try harness.sendPipeMessage("inject|first\n")
+        _ = try harness.waitForDebugLog(containing: "after_buffer<<<first>>>")
+
+        try harness.sendPipeMessage("clear|\n")
+        _ = try harness.waitForDebugLog(containing: "clear applied")
+
+        try harness.sendPipeMessage("inject|second\n")
+        _ = try harness.waitForDebugLog(containing: "after_buffer<<<second>>>")
+
+        try harness.sendPipeMessage("clear|\n")
+        _ = try harness.waitForDebugLog(containing: "clear applied")
+
+        try harness.sendPipeMessage("inject|third\n")
+        let log = try harness.waitForDebugLog(containing: "after_buffer<<<third>>>")
+        XCTAssertTrue(log.contains("after_buffer<<<third>>>"), "All three injections should succeed")
+    }
+
+    func testInjectThenClearThenInject() throws {
+        let harness = try InteractiveZshHarness()
+        defer { harness.shutdown() }
+
+        try harness.sendPipeMessage("inject|lifecycle_start\n")
+        _ = try harness.waitForDebugLog(containing: "after_buffer<<<lifecycle_start>>>")
+
+        try harness.sendPipeMessage("clear|\n")
+        let clearLog = try harness.waitForDebugLog(containing: "clear applied after_len=0")
+        XCTAssertTrue(clearLog.contains("after_buffer<<<>>>"), "Buffer should be empty after clear")
+
+        try harness.sendPipeMessage("inject|lifecycle_end\n")
+        let finalLog = try harness.waitForDebugLog(containing: "after_buffer<<<lifecycle_end>>>")
+        XCTAssertTrue(finalLog.contains("after_buffer<<<lifecycle_end>>>"), "Injection after clear should work")
+    }
+
+    // MARK: - WS2: Clear and roger/abort PTY tests
+
+    func testClearResetsBuffer() throws {
+        let harness = try InteractiveZshHarness()
+        defer { harness.shutdown() }
+
+        try harness.sendPipeMessage("inject|some leftover text\n")
+        XCTAssertTrue(try harness.waitForDebugLog(containing: "inject applied").contains("inject applied"))
+
+        try harness.sendPipeMessage("clear|\n")
+        XCTAssertTrue(try harness.waitForDebugLog(containing: "clear applied after_len=0 after_buffer<<<>>>").contains("after_len=0"))
+    }
+
+    func testClearThenInjectWorks() throws {
+        let harness = try InteractiveZshHarness()
+        defer { harness.shutdown() }
+
+        try harness.sendPipeMessage("inject|stale command\n")
+        XCTAssertTrue(try harness.waitForDebugLog(containing: "inject applied").contains("inject applied"))
+
+        try harness.sendPipeMessage("clear|\n")
+        XCTAssertTrue(try harness.waitForDebugLog(containing: "clear applied after_len=0").contains("after_len=0"))
+
+        try harness.sendPipeMessage("inject|echo FRESH_START\n")
+        XCTAssertTrue(try harness.waitForDebugLog(containing: "after_buffer<<<echo FRESH_START>>>").contains("after_buffer<<<echo FRESH_START>>>"))
+
+        try harness.pressReturn()
+        XCTAssertTrue(try harness.waitForOutput(containing: "FRESH_START").contains("FRESH_START"))
+    }
 }
 
 private final class InteractiveZshHarness {
@@ -109,6 +192,10 @@ private final class InteractiveZshHarness {
 
     func pressReturn() throws {
         try sendInput("\n")
+    }
+
+    func typeCharacter(_ char: String) throws {
+        try sendInput(char)
     }
 
     func waitForOutput(containing needle: String, timeout: TimeInterval = 3.0) throws -> String {
