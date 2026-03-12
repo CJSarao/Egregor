@@ -1,7 +1,6 @@
 import Foundation
 
 actor SessionController {
-    enum OperatingMode: Equatable { case ptt, open }
 
     private let hotkeys: any HotkeyManager
     private let pipeline: any AudioPipeline
@@ -10,8 +9,6 @@ actor SessionController {
     private let output: any OutputManager
     private let log: RuntimeLogger
 
-    private(set) var operatingMode: OperatingMode = .ptt
-    private var pendingInputMode: InputMode?
     private var isRecording = false
     private var partialTask: Task<Void, Never>?
 
@@ -54,44 +51,20 @@ actor SessionController {
     private func handle(_ event: HotkeyEvent) async {
         log.log("hotkey event: \(event)", category: .session)
         switch event {
-        case .pttBegan:
-            guard operatingMode == .ptt else {
-                log.log("pttBegan ignored (OPEN mode active)", category: .session)
-                return
+        case .toggle:
+            if isRecording {
+                isRecording = false
+                cancelPartialTask()
+                log.log("toggle → stop recording", category: .session)
+                hudContinuation.yield(.idle)
+                await pipeline.stop()
+            } else {
+                isRecording = true
+                resetPartialTracking()
+                log.log("toggle → start recording", category: .session)
+                hudContinuation.yield(.recording())
+                await pipeline.start()
             }
-            isRecording = true
-            resetPartialTracking()
-            hudContinuation.yield(.recording(mode: .ptt))
-            await pipeline.start()
-        case .pttEnded(let mode):
-            guard operatingMode == .ptt else {
-                log.log("pttEnded ignored (OPEN mode active)", category: .session)
-                return
-            }
-            pendingInputMode = mode
-            await pipeline.forceEnd()
-            await pipeline.stop()
-        case .modeToggled:
-            await toggleMode()
-        }
-    }
-
-    private func toggleMode() async {
-        switch operatingMode {
-        case .ptt:
-            operatingMode = .open
-            isRecording = true
-            resetPartialTracking()
-            log.log("mode toggled: PTT → OPEN", category: .session)
-            hudContinuation.yield(.recording(mode: .open))
-            await pipeline.start()
-        case .open:
-            operatingMode = .ptt
-            isRecording = false
-            cancelPartialTask()
-            log.log("mode toggled: OPEN → PTT", category: .session)
-            hudContinuation.yield(.idle)
-            await pipeline.stop()
         }
     }
 
@@ -108,27 +81,25 @@ actor SessionController {
     private func runPartialStreamLoop() async {
         for await text in transcriber.partialTextStream {
             guard isRecording, !text.isEmpty else { continue }
-            hudContinuation.yield(.recording(mode: operatingMode, partialText: text))
+            hudContinuation.yield(.recording(partialText: text))
         }
     }
 
     private func runSegmentLoop() async {
         for await segment in pipeline.segments {
-            let mode = pendingInputMode ?? .dictation
-            pendingInputMode = nil
             isRecording = false
             cancelPartialTask()
-            log.log("segment received: duration=\(segment.duration), silenceBefore=\(segment.silenceBefore), trailingSilenceAfter=\(segment.trailingSilenceAfter), endedBySilence=\(segment.endedBySilence), mode=\(mode)", category: .session)
+            log.log("segment received: duration=\(segment.duration), silenceBefore=\(segment.silenceBefore), trailingSilenceAfter=\(segment.trailingSilenceAfter), endedBySilence=\(segment.endedBySilence)", category: .session)
             hudContinuation.yield(.transcribing)
             let result = await transcriber.transcribe(segment)
             log.log("transcription: chars=\(result.text.count) confidence=\(result.confidence)", category: .session)
-            let intent = resolver.resolve(result, mode: mode)
+            let intent = resolver.resolve(result)
             log.log("resolved intent: \(intent)", category: .session)
             dispatch(intent, result: result)
-            if operatingMode == .open {
+            if isRecording == false {
                 isRecording = true
                 resetPartialTracking()
-                hudContinuation.yield(.recording(mode: .open))
+                hudContinuation.yield(.recording())
             }
         }
     }

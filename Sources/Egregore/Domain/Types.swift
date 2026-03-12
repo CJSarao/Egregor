@@ -12,14 +12,10 @@ struct KeyBinding: Sendable, Equatable {
 }
 
 struct HotkeyBindings: Sendable {
-    let pttKey: KeyBinding
-    let commandModifier: KeyBinding
-    let modeToggle: KeyBinding
+    let toggleKey: KeyBinding
 
     static let `default` = HotkeyBindings(
-        pttKey: KeyBinding(keyCode: 54, flag: .command, displayName: "Right Command"),
-        commandModifier: KeyBinding(keyCode: 60, flag: .shift, displayName: "Right Shift"),
-        modeToggle: KeyBinding(keyCode: 62, flag: .control, displayName: "Right Control")
+        toggleKey: KeyBinding(keyCode: 62, flag: .control, displayName: "Right Control")
     )
 }
 
@@ -43,14 +39,7 @@ struct TranscriptionResult {
 }
 
 enum HotkeyEvent: Equatable {
-    case pttBegan
-    case pttEnded(mode: InputMode)
-    case modeToggled
-}
-
-enum InputMode: Equatable {
-    case dictation
-    case command
+    case toggle
 }
 
 enum Intent {
@@ -71,7 +60,7 @@ enum OutputResult: Equatable {
 
 enum HUDState: Equatable {
     case idle
-    case recording(mode: SessionController.OperatingMode, partialText: String? = nil)
+    case recording(partialText: String? = nil)
     case transcribing
     case injected(String)
     case cleared

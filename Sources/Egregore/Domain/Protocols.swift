@@ -3,7 +3,6 @@ import Foundation
 protocol AudioPipeline {
     func start() async
     func stop() async
-    func forceEnd() async
     var segments: AsyncStream<SpeechSegment> { get }
     var captureSnapshots: AsyncStream<SpeechCaptureSnapshot> { get }
 }
@@ -19,7 +18,7 @@ protocol Transcriber {
 }
 
 protocol IntentResolver {
-    func resolve(_ result: TranscriptionResult, mode: InputMode) -> Intent
+    func resolve(_ result: TranscriptionResult) -> Intent
 }
 
 protocol OutputManager {

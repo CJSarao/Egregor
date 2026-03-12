@@ -84,33 +84,22 @@ Only WhisperKit is currently declared as a third-party dependency. Any additiona
 
 ## 5. Mode System
 
-Two operational modes, toggled by a persistent hotkey.
+Single mode: toggle mic on/off with a dedicated hotkey.
 
-### PTT (Push-to-Talk) — default
-- Hold PTT key → mic records and HUD shows a live transcript for the current utterance
-- Release PTT key → finalize the utterance, hide the live transcript state, and inject the finalized text into the active terminal buffer
-- Hold Command mode modifier + PTT key → record single utterance with the same live HUD transcript, then on release parse as command only (no append)
-- Once command mode is entered during a PTT hold, it remains latched for that utterance even if the modifier is released before the PTT key
-
-### OPEN (Open Mic)
-- VAD runs continuously while OPEN mode is active
-- During an utterance, the HUD shows a live transcript for immediate user feedback
+### Toggle (Open Mic)
+- Tap toggle key → mic records, VAD runs continuously, HUD shows a live transcript for the current utterance
 - When silence ends the utterance, finalize the transcript, hide the live transcript state, and inject the finalized text into the active terminal buffer
 - Isolated command words trigger command parsing (see isolation algorithm below)
 - Normal utterances append to terminal buffer — ABORT is the only way to clear
+- Tap toggle key again → mic stops, HUD shows idle
 
-### Mode Toggle
-Dedicated hotkey switches between PTT and OPEN. State persists for the session. HUD displays current mode.
-
-### Default Hotkeys
+### Default Hotkey
 
 | Action | Key | Mechanism |
 |---|---|---|
-| PTT record | `Right Command (⌘)` hold | `NSEvent flagsChanged` |
-| PTT command mode | `Right Shift + Right Command` hold | `NSEvent flagsChanged` |
-| Mode toggle (PTT ↔ OPEN) | `Right Control (^)` tap | `NSEvent flagsChanged` |
+| Toggle mic on/off | `Right Control (^)` tap | `NSEvent flagsChanged` |
 
-All defaults use right-side modifier keys only. No conflicts with terminal control sequences, common IDE shortcuts, or macOS system shortcuts. Comfortable to reach without looking — suitable for treadmill use.
+Right-side modifier key only. No conflicts with terminal control sequences, common IDE shortcuts, or macOS system shortcuts. Comfortable to reach without looking — suitable for treadmill use.
 
 ---
 
@@ -127,13 +116,11 @@ Vocabulary is fixed. No user configuration.
 
 ---
 
-## 7. Isolation Algorithm (OPEN mode command detection)
+## 7. Isolation Algorithm (command detection)
 
 ```
 utterance arrives
-  silenceBefore > 1500ms  AND
   duration < 2000ms        AND
-  trailingSilenceAfter >= 800ms      AND
   endedBySilence == true             AND
   text matches command vocabulary
   → Intent.command(_)
@@ -154,7 +141,6 @@ The timing thresholds are compile-time constants inside the audio pipeline and `
 protocol AudioPipeline {
     func start() async
     func stop() async
-    func forceEnd() async  // PTT release — terminates segment regardless of VAD state
     var segments: AsyncStream<SpeechSegment> { get }
     var captureSnapshots: AsyncStream<SpeechCaptureSnapshot> { get }
 }
@@ -164,7 +150,7 @@ struct SpeechSegment {
     let silenceBefore: Duration  // elapsed since last segment ended
     let duration: Duration
     let trailingSilenceAfter: Duration  // silence accumulated after speech before emission
-    let endedBySilence: Bool            // true only when VAD, not forceEnd/stop, closed the utterance
+    let endedBySilence: Bool            // true only when VAD closed the utterance
 }
 
 struct SpeechCaptureSnapshot {
@@ -175,7 +161,7 @@ struct SpeechCaptureSnapshot {
 
 Hides: AVFoundation setup, audio format config, VAD algorithm, buffer accumulation, segment termination details, threading. Callers never touch AVFoundation.
 
-In PTT mode: `forceEnd()` overrides VAD on key release. In OPEN mode: VAD self-terminates segments. This difference is entirely internal.
+VAD self-terminates segments when silence is detected. This is entirely internal.
 
 ---
 
@@ -187,18 +173,11 @@ protocol HotkeyManager {
 }
 
 enum HotkeyEvent {
-    case pttBegan
-    case pttEnded(mode: InputMode)
-    case modeToggled
-}
-
-enum InputMode {
-    case dictation  // normal — inject on speech end
-    case command    // modifier held — parse as vocabulary only, no injection
+    case toggle
 }
 ```
 
-Hides: NSEvent global monitors, modifier key tracking, and Accessibility permissions. Callers receive resolved intent of key combinations only.
+Hides: NSEvent global monitors, modifier key tracking, and Accessibility permissions. Callers receive a single toggle event.
 
 ---
 
@@ -225,7 +204,7 @@ Hides: WhisperKit initialization, model loading, shared in-flight load coordinat
 
 ```swift
 protocol IntentResolver {
-    func resolve(_ result: TranscriptionResult, mode: InputMode) -> Intent
+    func resolve(_ result: TranscriptionResult) -> Intent
 }
 
 enum Intent {
@@ -269,31 +248,16 @@ When session discovery or pipe delivery fails, `OutputManager` must emit explici
 The only module that knows all others. It translates runtime events into output actions.
 
 ```text
-1) pttEnded(.dictation)
-   pipeline: transcribe -> resolve
-   outcomes:
-   - .inject(t) -> output.append(t)
-   - .discard   -> no-op
+toggle → start recording
+  pipeline: transcribe -> resolve
+  outcomes:
+  - .inject(t) -> output.append(t), auto-restart recording
+  - .command(.roger) -> output.send(), auto-restart recording
+  - .command(.abort) -> output.clear(), auto-restart recording
+  - .discard -> no-op, auto-restart recording
 
-2) pttEnded(.command)
-   pipeline: transcribe -> resolve
-   outcomes:
-   - .command(.roger) -> output.send()
-   - .command(.abort) -> output.clear()
-   - .discard         -> no-op
-
-3) OPEN segment
-   pipeline: transcribe -> resolve
-   outcomes:
-   - .inject(t) -> output.append(t)
-   - .discard   -> no-op
-
-4) OPEN isolated command
-   pipeline: transcribe -> resolve
-   outcomes:
-   - .command(.roger) -> output.send()
-   - .command(.abort) -> output.clear()
-   - .discard         -> no-op
+toggle → stop recording
+  pipeline.stop(), HUD idle
 ```
 
 ---
@@ -310,10 +274,6 @@ Pure observer of `SessionController` state. No interface — subscribes to publi
 .error        → show a short visible failure message, then dismiss
 .idle         → hidden
 ```
-
-The HUD behavior must be consistent across PTT and OPEN mode. The only difference between modes is what ends the utterance:
-- PTT: key release
-- OPEN: silence detection
 
 Floating `NSWindow`, level `.floating`, `canBecomeKey = false`, click-through. Never steals focus from target application.
 
@@ -466,7 +426,7 @@ Tests are **proof that the implementation satisfies the spec**. They are the pri
 
 **Property-based tests** for logic modules:
 
-- `IntentResolver`: for any transcription matching vocabulary text, with `silenceBefore > 1500ms`, `duration < 2000ms`, `trailingSilenceAfter >= 800ms`, and `endedBySilence == true`, `resolve()` always returns `.command(_)` in dictation mode — never `.inject`, never `.discard`
+- `IntentResolver`: for any transcription matching vocabulary text, with `duration < 2000ms` and `endedBySilence == true`, `resolve()` always returns `.command(_)` — never `.inject`, never `.discard`
 - `IntentResolver`: for any non-vocabulary text regardless of timing, `resolve()` never returns `.command(_)`
 - `IntentResolver`: for any transcription with confidence below threshold, `resolve()` always returns `.discard`
 - `OutputManager` (mocked pipe): any sequence of `append` calls followed by `clear` always ends with a final `clear|` message regardless of text content, length, or unicode composition
@@ -517,7 +477,7 @@ Each milestone is independently verifiable. Milestones 1–3 require no hardware
 | 2 | Pass hardcoded `[Float]` through `WhisperKitTranscriber`, receive non-empty text | Unit assertion, no mic |
 | 3 | Feed mock `TranscriptionResult` into `IntentResolver`, verify correct `Intent` for all branches | Property-based test suite |
 | 4 | `AVAudioEngine` tap running, `SpeechSegment` emitted correctly on real speech with VAD silence detection | Mic required |
-| 5 | PTT full path: hold key → speak → release → text appears in terminal buffer | Hardware E2E |
-| 6 | OPEN mode: isolated ROGER/ABORT route to commands, normal speech injects after silence finalization | Hardware E2E |
+| 5 | Toggle on → speak → VAD finalizes → text appears in terminal buffer | Hardware E2E |
+| 6 | Isolated ROGER/ABORT route to commands, normal speech injects after silence finalization | Hardware E2E |
 | 7 | HUD: appears on record, shows live transcript text during capture, and dismisses correctly for all exit paths | Visual verification |
 | 8 | Shell integration installer: prompt, snippet written to `.zshrc`, registry operational across multiple sessions | Integration test |

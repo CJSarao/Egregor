@@ -81,12 +81,6 @@ actor AVAudioEnginePipeline: AudioPipeline {
         samplesSinceLastEnd = 0
     }
 
-    func forceEnd() {
-        guard inSpeech else { return }
-        emitCurrentSegment(endedBySilence: false)
-        resetVADState()
-    }
-
     // MARK: - VAD processing (internal for direct test access)
 
     func processChunk(_ chunk: [Float]) {

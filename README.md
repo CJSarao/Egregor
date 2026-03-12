@@ -6,12 +6,7 @@ macOS menu bar app that transcribes speech and injects it into the active zsh se
 
 ## How it works
 
-Hold Right Command, speak, release. Text appears in your terminal's zsh line buffer. No simulated keystrokes — Egregore writes directly into ZLE via a named pipe.
-
-Two modes:
-
-- **PTT (Push-to-Talk)** — hold key, speak, release. Default.
-- **OPEN** — continuous VAD. Speak freely, text flows in.
+Tap Right Control to toggle the mic on. Speak. Text appears in your terminal's zsh line buffer as VAD finalizes each utterance. Tap Right Control again to stop. No simulated keystrokes — Egregore writes directly into ZLE via a named pipe.
 
 Two voice commands:
 
@@ -69,7 +64,7 @@ Shell-side debug logging available via `EGREGORE_SHELL_DEBUG=1`.
 
 ### Testing
 
-All modules are testable without audio hardware. Closure injection replaces real audio taps and WhisperKit engines with stubs. 172 tests cover resolver logic, output semantics, HUD state transitions, streaming partials, and mocked end-to-end flows.
+All modules are testable without audio hardware. Closure injection replaces real audio taps and WhisperKit engines with stubs. Tests cover resolver logic, output semantics, HUD state transitions, streaming partials, and mocked end-to-end flows.
 
 ## Dependencies
 

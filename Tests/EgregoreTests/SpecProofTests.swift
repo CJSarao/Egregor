@@ -4,8 +4,6 @@ import Darwin
 
 // MARK: - Property-Based: IntentResolver
 
-/// Spec §6–7: command matching, non-command rejection, confidence floor.
-/// Each test runs randomized inputs over many iterations to verify invariants.
 final class IntentResolverPropertyTests: XCTestCase {
 
     let resolver = EgregoreIntentResolver()
@@ -23,13 +21,11 @@ final class IntentResolverPropertyTests: XCTestCase {
     private func randomNonIsolatedTiming() -> (silence: Duration, duration: Duration, trailingSilence: Duration, endedBySilence: Bool) {
         switch Int.random(in: 0...1) {
         case 0:
-            // Not ended by silence — always injects regardless of other timing
             return (.milliseconds(Int.random(in: 0...5000)),
                     .milliseconds(Int.random(in: 50...5000)),
                     .milliseconds(Int.random(in: 0...1600)),
                     false)
         default:
-            // Duration at or above threshold — too long to be a standalone command
             return (.milliseconds(Int.random(in: 0...5000)),
                     .milliseconds(Int.random(in: 2000...5000)),
                     .milliseconds(Int.random(in: 0...1600)),
@@ -57,7 +53,7 @@ final class IntentResolverPropertyTests: XCTestCase {
         )
     }
 
-    // MARK: Spec §7 — Isolated vocabulary + sufficient confidence → .command
+    // MARK: Isolated vocabulary + sufficient confidence → .command
 
     func testVocabularyWithIsolationTimingAlwaysResolvesToCommand() {
         let vocabulary = ["ROGER", "roger", "Roger", "ABORT", "abort", "Abort"]
@@ -67,7 +63,7 @@ final class IntentResolverPropertyTests: XCTestCase {
             let (silence, dur, trailingSilence, endedBySilence) = randomIsolatedTiming()
             let result = makeResult(text: word, confidence: confidence, silence: silence, duration: dur, trailingSilence: trailingSilence, endedBySilence: endedBySilence)
 
-            let intent = resolver.resolve(result, mode: .dictation)
+            let intent = resolver.resolve(result)
             guard case .command = intent else {
                 XCTFail("Vocabulary '\(word)' with isolated timing must resolve to .command, got \(intent) (silence=\(silence), dur=\(dur), conf=\(confidence))")
                 return
@@ -75,66 +71,43 @@ final class IntentResolverPropertyTests: XCTestCase {
         }
     }
 
-    // MARK: Spec §6 — Command mode vocabulary → .command
-
-    func testCommandModeVocabularyAlwaysResolvesToCommand() {
-        let vocabulary = ["ROGER", "roger", "ABORT", "abort"]
-        for _ in 0..<iterations {
-            let word = vocabulary.randomElement()!
-            let confidence = Float.random(in: 0.3...1.0)
-            let silence = Duration.milliseconds(Int.random(in: 0...5000))
-            let dur     = Duration.milliseconds(Int.random(in: 50...5000))
-            let result = makeResult(text: word, confidence: confidence, silence: silence, duration: dur)
-
-            let intent = resolver.resolve(result, mode: .command)
-            guard case .command = intent else {
-                XCTFail("Vocabulary '\(word)' in command mode must resolve to .command, got \(intent)")
-                return
-            }
-        }
-    }
-
-    // MARK: Spec §6 — Non-vocabulary NEVER produces .command regardless of timing or mode
+    // MARK: Non-vocabulary NEVER produces .command regardless of timing
 
     func testNonVocabularyNeverResolvesToCommand() {
-        let modes: [InputMode] = [.dictation, .command]
         for _ in 0..<iterations {
             let text = randomNonVocabularyText()
-            let mode = modes.randomElement()!
             let confidence = Float.random(in: 0.3...1.0)
             let (silence, dur, trailingSilence, endedBySilence) = randomIsolatedTiming()
             let result = makeResult(text: text, confidence: confidence, silence: silence, duration: dur, trailingSilence: trailingSilence, endedBySilence: endedBySilence)
 
-            let intent = resolver.resolve(result, mode: mode)
+            let intent = resolver.resolve(result)
             if case .command = intent {
-                XCTFail("Non-vocabulary '\(text)' must never resolve to .command in \(mode) mode")
+                XCTFail("Non-vocabulary '\(text)' must never resolve to .command")
             }
         }
     }
 
-    // MARK: Spec §11 — Low confidence → .discard regardless of text, timing, or mode
+    // MARK: Low confidence → .discard regardless of text or timing
 
     func testLowConfidenceAlwaysDiscards() {
         let allTexts = ["ROGER", "ABORT", "hello", "git status", "roger", "abort"]
-        let modes: [InputMode] = [.dictation, .command]
         for _ in 0..<iterations {
             let text = allTexts.randomElement()!
-            let mode = modes.randomElement()!
             let confidence = Float.random(in: 0.0...0.2999)
             let silence = Duration.milliseconds(Int.random(in: 0...5000))
             let dur     = Duration.milliseconds(Int.random(in: 50...5000))
             let result = makeResult(text: text, confidence: confidence, silence: silence, duration: dur)
 
             XCTAssertEqual(
-                resolver.resolve(result, mode: mode), .discard,
-                "Confidence \(confidence) must always discard, text='\(text)', mode=\(mode)"
+                resolver.resolve(result), .discard,
+                "Confidence \(confidence) must always discard, text='\(text)'"
             )
         }
     }
 
-    // MARK: Spec §7 — Vocabulary without isolation timing in dictation mode → .inject (not .command)
+    // MARK: Vocabulary without isolation timing → .inject (not .command)
 
-    func testVocabularyWithoutIsolationInjectsInDictationMode() {
+    func testVocabularyWithoutIsolationInjects() {
         let vocabulary = ["ROGER", "ABORT"]
         for _ in 0..<iterations {
             let word = vocabulary.randomElement()!
@@ -142,10 +115,10 @@ final class IntentResolverPropertyTests: XCTestCase {
             let (silence, dur, trailingSilence, endedBySilence) = randomNonIsolatedTiming()
             let result = makeResult(text: word, confidence: confidence, silence: silence, duration: dur, trailingSilence: trailingSilence, endedBySilence: endedBySilence)
 
-            let intent = resolver.resolve(result, mode: .dictation)
+            let intent = resolver.resolve(result)
             XCTAssertEqual(
                 intent, .inject(word),
-                "Vocabulary '\(word)' without isolation must inject in dictation mode (silence=\(silence), dur=\(dur))"
+                "Vocabulary '\(word)' without isolation must inject (silence=\(silence), dur=\(dur))"
             )
         }
     }
@@ -153,7 +126,6 @@ final class IntentResolverPropertyTests: XCTestCase {
 
 // MARK: - Property-Based: OutputManager Buffer Semantics
 
-/// Spec §8 OutputManager: append concatenation and clear reset semantics via pipe protocol.
 final class OutputManagerPropertyTests: XCTestCase {
 
     private func makePipe() -> (path: String, fd: Int32) {
@@ -174,8 +146,6 @@ final class OutputManagerPropertyTests: XCTestCase {
         raw.components(separatedBy: "\n").filter { !$0.isEmpty }
     }
 
-    // Spec §8 — Any sequence of appends followed by clear always ends with clear| message
-
     func testAppendSequenceFollowedByClearAlwaysEndsClear() {
         let (path, fd) = makePipe()
         defer { Darwin.close(fd); Darwin.unlink(path) }
@@ -192,8 +162,6 @@ final class OutputManagerPropertyTests: XCTestCase {
         XCTAssertEqual(messages.count, count + 1)
     }
 
-    // Spec §8 — Multiple appends produce inject| messages in pipe write order
-
     func testMultipleAppendsProduceOrderedInjectMessages() {
         let (path, fd) = makePipe()
         defer { Darwin.close(fd); Darwin.unlink(path) }
@@ -208,8 +176,6 @@ final class OutputManagerPropertyTests: XCTestCase {
         let expected = words.map { "inject|\($0)" }
         XCTAssertEqual(messages, expected)
     }
-
-    // Spec §8 — Unicode content survives pipe round-trip
 
     func testUnicodeContentSurvivesPipeRoundTrip() {
         let (path, fd) = makePipe()
@@ -229,8 +195,6 @@ final class OutputManagerPropertyTests: XCTestCase {
 
 // MARK: - End-to-End: Transcriber → Resolver → Output
 
-/// Spec §11 E2E: synthesized segments through transcriber, resolver, and output verify
-/// correct behavior for all pipeline branches without audio hardware.
 final class SpecEndToEndTests: XCTestCase {
 
     // MARK: Helpers
@@ -248,7 +212,7 @@ final class SpecEndToEndTests: XCTestCase {
                       endedBySilence: endedBySilence)
     }
 
-    // MARK: E2E Milestone 2 — Transcriber produces text from synthesized audio
+    // MARK: Transcriber produces text from synthesized audio
 
     func testTranscriberReturnsTextFromSynthesizedInput() async {
         let segment = makeSegment()
@@ -266,13 +230,13 @@ final class SpecEndToEndTests: XCTestCase {
         XCTAssertEqual(result.segment.endedBySilence, segment.endedBySilence)
     }
 
-    // MARK: E2E Milestone 3 — IntentResolver all branches
+    // MARK: IntentResolver all branches
 
     func testResolverDictationInject() {
         let resolver = EgregoreIntentResolver()
         let segment = makeSegment(silenceBefore: .milliseconds(100))
         let result = TranscriptionResult(text: "npm install", confidence: 0.9, segment: segment)
-        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .inject("npm install"))
+        XCTAssertEqual(resolver.resolve(result), .inject("npm install"))
     }
 
     func testResolverDictationIsolatedRoger() {
@@ -282,7 +246,7 @@ final class SpecEndToEndTests: XCTestCase {
                                   trailingSilenceAfter: .milliseconds(900),
                                   endedBySilence: true)
         let result = TranscriptionResult(text: "ROGER", confidence: 0.9, segment: segment)
-        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .command(.roger))
+        XCTAssertEqual(resolver.resolve(result), .command(.roger))
     }
 
     func testResolverDictationIsolatedAbort() {
@@ -292,38 +256,17 @@ final class SpecEndToEndTests: XCTestCase {
                                   trailingSilenceAfter: .milliseconds(900),
                                   endedBySilence: true)
         let result = TranscriptionResult(text: "ABORT", confidence: 0.9, segment: segment)
-        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .command(.abort))
-    }
-
-    func testResolverCommandRoger() {
-        let resolver = EgregoreIntentResolver()
-        let segment = makeSegment()
-        let result = TranscriptionResult(text: "ROGER", confidence: 0.9, segment: segment)
-        XCTAssertEqual(resolver.resolve(result, mode: .command), .command(.roger))
-    }
-
-    func testResolverCommandAbort() {
-        let resolver = EgregoreIntentResolver()
-        let segment = makeSegment()
-        let result = TranscriptionResult(text: "ABORT", confidence: 0.9, segment: segment)
-        XCTAssertEqual(resolver.resolve(result, mode: .command), .command(.abort))
+        XCTAssertEqual(resolver.resolve(result), .command(.abort))
     }
 
     func testResolverDiscardsLowConfidence() {
         let resolver = EgregoreIntentResolver()
         let segment = makeSegment()
         let result = TranscriptionResult(text: "ROGER", confidence: 0.1, segment: segment)
-        XCTAssertEqual(resolver.resolve(result, mode: .command), .discard)
+        XCTAssertEqual(resolver.resolve(result), .discard)
     }
 
-    func testResolverCommandModeNonVocabularyDiscards() {
-        let resolver = EgregoreIntentResolver()
-        let segment = makeSegment()
-        let result = TranscriptionResult(text: "git push", confidence: 0.9, segment: segment)
-        XCTAssertEqual(resolver.resolve(result, mode: .command), .discard)
-    }
-
-    // MARK: E2E Milestone 1 — Intent → OutputManager pipe writes
+    // MARK: Intent → OutputManager pipe writes
 
     func testInjectIntentProducesCorrectPipeWrite() {
         let (path, fd) = makePipeForE2E()
@@ -356,15 +299,15 @@ final class SpecEndToEndTests: XCTestCase {
         XCTAssertEqual(readPipe(fd: fd), "inject|ls -la\nsend|\n")
     }
 
-    // MARK: E2E — Full mocked pipeline: segment → transcribe → resolve → output
+    // MARK: Full mocked pipeline: toggle → segment → transcribe → resolve → output
 
-    func testFullPipelinePTTDictationInject() async throws {
+    func testFullPipelineDictationInject() async throws {
         let output = MockOutputManager()
         let exp = expectation(description: "inject via full pipeline")
         output.onAppend = { _ in exp.fulfill() }
 
         let hotkeys  = MockHotkeyManager()
-        let pipeline = MockAudioPipeline(nextSegment: makeSegment(silenceBefore: .milliseconds(200)))
+        let pipeline = MockAudioPipeline()
         let txr      = MockTranscriber(
             TranscriptionResult(text: "git log", confidence: 0.95,
                                 segment: makeSegment(silenceBefore: .milliseconds(200)))
@@ -373,57 +316,14 @@ final class SpecEndToEndTests: XCTestCase {
                                      transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
-        hotkeys.emit(.pttBegan)
-        hotkeys.emit(.pttEnded(mode: .dictation))
+        hotkeys.emit(.toggle)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        await pipeline.emitSegment(makeSegment(silenceBefore: .milliseconds(200)))
 
         await fulfillment(of: [exp], timeout: 2)
         XCTAssertEqual(output.appended, ["git log"])
         XCTAssertEqual(output.sendCount, 0)
         XCTAssertEqual(output.clearCount, 0)
-    }
-
-    func testFullPipelinePTTCommandRoger() async throws {
-        let output = MockOutputManager()
-        let exp = expectation(description: "send via full pipeline")
-        output.onSend = { exp.fulfill() }
-
-        let hotkeys  = MockHotkeyManager()
-        let pipeline = MockAudioPipeline(nextSegment: makeSegment())
-        let txr      = MockTranscriber(
-            TranscriptionResult(text: "ROGER", confidence: 0.9, segment: makeSegment())
-        )
-        let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
-        await ctrl.start()
-
-        hotkeys.emit(.pttBegan)
-        hotkeys.emit(.pttEnded(mode: .command))
-
-        await fulfillment(of: [exp], timeout: 2)
-        XCTAssertEqual(output.sendCount, 1)
-        XCTAssertEqual(output.appended, [])
-    }
-
-    func testFullPipelinePTTCommandAbort() async throws {
-        let output = MockOutputManager()
-        let exp = expectation(description: "clear via full pipeline")
-        output.onClear = { exp.fulfill() }
-
-        let hotkeys  = MockHotkeyManager()
-        let pipeline = MockAudioPipeline(nextSegment: makeSegment())
-        let txr      = MockTranscriber(
-            TranscriptionResult(text: "ABORT", confidence: 0.9, segment: makeSegment())
-        )
-        let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
-        await ctrl.start()
-
-        hotkeys.emit(.pttBegan)
-        hotkeys.emit(.pttEnded(mode: .command))
-
-        await fulfillment(of: [exp], timeout: 2)
-        XCTAssertEqual(output.clearCount, 1)
-        XCTAssertEqual(output.appended, [])
     }
 
     func testFullPipelineLowConfidenceDiscardsEverything() async throws {
@@ -435,7 +335,7 @@ final class SpecEndToEndTests: XCTestCase {
         output.onClear  = { exp.fulfill() }
 
         let hotkeys  = MockHotkeyManager()
-        let pipeline = MockAudioPipeline(nextSegment: makeSegment())
+        let pipeline = MockAudioPipeline()
         let txr      = MockTranscriber(
             TranscriptionResult(text: "ROGER", confidence: 0.1, segment: makeSegment())
         )
@@ -443,8 +343,9 @@ final class SpecEndToEndTests: XCTestCase {
                                      transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
-        hotkeys.emit(.pttBegan)
-        hotkeys.emit(.pttEnded(mode: .command))
+        hotkeys.emit(.toggle)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        await pipeline.emitSegment(makeSegment())
 
         await fulfillment(of: [exp], timeout: 0.5)
         XCTAssertEqual(output.appended, [])
@@ -452,9 +353,9 @@ final class SpecEndToEndTests: XCTestCase {
         XCTAssertEqual(output.clearCount, 0)
     }
 
-    func testFullPipelineOpenModeIsolatedCommandSendsReturn() async throws {
+    func testFullPipelineIsolatedCommandSendsReturn() async throws {
         let output = MockOutputManager()
-        let exp = expectation(description: "send in OPEN mode")
+        let exp = expectation(description: "send")
         output.onSend = { exp.fulfill() }
 
         let hotkeys  = MockHotkeyManager()
@@ -470,7 +371,7 @@ final class SpecEndToEndTests: XCTestCase {
                                      transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
-        hotkeys.emit(.modeToggled)
+        hotkeys.emit(.toggle)
         try await Task.sleep(nanoseconds: 30_000_000)
         await pipeline.emitSegment(makeSegment(silenceBefore: .milliseconds(2000),
                                                duration: .milliseconds(800),
@@ -482,9 +383,9 @@ final class SpecEndToEndTests: XCTestCase {
         XCTAssertEqual(output.appended, [])
     }
 
-    func testFullPipelineOpenModeNormalUtteranceAppends() async throws {
+    func testFullPipelineNormalUtteranceAppends() async throws {
         let output = MockOutputManager()
-        let exp = expectation(description: "append in OPEN mode")
+        let exp = expectation(description: "append")
         output.onAppend = { _ in exp.fulfill() }
 
         let hotkeys  = MockHotkeyManager()
@@ -500,7 +401,7 @@ final class SpecEndToEndTests: XCTestCase {
                                      transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
-        hotkeys.emit(.modeToggled)
+        hotkeys.emit(.toggle)
         try await Task.sleep(nanoseconds: 30_000_000)
         await pipeline.emitSegment(makeSegment(silenceBefore: .milliseconds(200),
                                                duration: .milliseconds(1500),
@@ -511,7 +412,7 @@ final class SpecEndToEndTests: XCTestCase {
         XCTAssertEqual(output.appended, ["docker ps"])
     }
 
-    // MARK: E2E — Multi-segment pipeline: append + append + ROGER
+    // MARK: Multi-segment pipeline: append + append + ROGER
 
     func testFullPipelineMultiSegmentAppendThenSend() async throws {
         let output = MockOutputManager()
@@ -521,7 +422,6 @@ final class SpecEndToEndTests: XCTestCase {
         let hotkeys  = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
 
-        // First two segments inject text, third is isolated ROGER → send
         let results: [TranscriptionResult] = [
             TranscriptionResult(text: "git", confidence: 0.9,
                                 segment: makeSegment(silenceBefore: .milliseconds(200))),
@@ -539,7 +439,7 @@ final class SpecEndToEndTests: XCTestCase {
                                      transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
-        hotkeys.emit(.modeToggled)
+        hotkeys.emit(.toggle)
         try await Task.sleep(nanoseconds: 30_000_000)
 
         await pipeline.emitSegment(makeSegment(silenceBefore: .milliseconds(200)))
@@ -591,7 +491,7 @@ final class SpecEndToEndTests: XCTestCase {
                                      transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
-        hotkeys.emit(.modeToggled)
+        hotkeys.emit(.toggle)
         try await Task.sleep(nanoseconds: 30_000_000)
 
         await pipeline.emitSegment(makeSegment(silenceBefore: .milliseconds(200),

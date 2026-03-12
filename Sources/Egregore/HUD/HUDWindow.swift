@@ -180,14 +180,14 @@ struct HUDContentView: View {
     @ViewBuilder
     private var statusText: some View {
         switch viewModel.state {
-        case .recording(let mode, let partialText):
+        case .recording(let partialText):
             if let partialText, !partialText.isEmpty {
                 Text(partialText)
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(.primary)
                     .lineLimit(2)
             } else {
-                Text(mode == .ptt ? "Listening (PTT)" : "Listening (Open)")
+                Text("Listening")
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(.primary)
             }

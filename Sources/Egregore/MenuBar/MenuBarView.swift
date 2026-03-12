@@ -182,9 +182,7 @@ struct MenuBarView: View {
         return VStack(alignment: .leading, spacing: 4) {
             Text("Hotkeys")
                 .font(.system(size: 11, weight: .semibold))
-            statusLine("PTT record", "Hold \(b.pttKey.displayName)")
-            statusLine("Command mode", "\(b.commandModifier.displayName) + PTT")
-            statusLine("Mode toggle", "Tap \(b.modeToggle.displayName)")
+            statusLine("Toggle mic", "Tap \(b.toggleKey.displayName)")
 
             Toggle("Key diagnostics", isOn: Binding(
                 get: { runtime.keyDiagnosticsEnabled },

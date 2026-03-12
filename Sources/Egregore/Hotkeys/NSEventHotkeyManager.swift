@@ -8,10 +8,7 @@ actor NSEventHotkeyManager: HotkeyManager {
     private let outputContinuation: AsyncStream<HotkeyEvent>.Continuation
     nonisolated let events: AsyncStream<HotkeyEvent>
 
-    private var pttKeyDown = false
-    private var commandModifierDown = false
-    private var pttCommandLatched = false
-    private var modeToggleDown = false
+    private var toggleKeyDown = false
 
     private var diagnosticsEnabled = false
     private var monitors: [Any] = []
@@ -39,34 +36,15 @@ actor NSEventHotkeyManager: HotkeyManager {
             RuntimeLogger.shared.log("KEY EVENT keyCode=\(keyCode) flags=[\(flagNames)]", category: .hotkey)
         }
 
-        if keyCode == bindings.pttKey.keyCode {
-            let isDown = flags.contains(bindings.pttKey.flag)
-            if isDown && !pttKeyDown {
-                pttKeyDown = true
-                pttCommandLatched = commandModifierDown
-                RuntimeLogger.shared.log("\(bindings.pttKey.displayName) down → pttBegan", category: .hotkey)
-                outputContinuation.yield(.pttBegan)
-            } else if !isDown && pttKeyDown {
-                pttKeyDown = false
-                let inputMode: InputMode = pttCommandLatched ? .command : .dictation
-                pttCommandLatched = false
-                RuntimeLogger.shared.log("\(bindings.pttKey.displayName) up → pttEnded(\(inputMode))", category: .hotkey)
-                outputContinuation.yield(.pttEnded(mode: inputMode))
-            }
-        } else if keyCode == bindings.commandModifier.keyCode {
-            commandModifierDown = flags.contains(bindings.commandModifier.flag)
-            if commandModifierDown && pttKeyDown {
-                pttCommandLatched = true
-            }
-        } else if keyCode == bindings.modeToggle.keyCode {
-            let isDown = flags.contains(bindings.modeToggle.flag)
-            if isDown && !modeToggleDown {
-                modeToggleDown = true
-                RuntimeLogger.shared.log("\(bindings.modeToggle.displayName) tap → modeToggled", category: .hotkey)
-                outputContinuation.yield(.modeToggled)
-            } else if !isDown {
-                modeToggleDown = false
-            }
+        guard keyCode == bindings.toggleKey.keyCode else { return }
+
+        let isDown = flags.contains(bindings.toggleKey.flag)
+        if isDown && !toggleKeyDown {
+            toggleKeyDown = true
+            RuntimeLogger.shared.log("\(bindings.toggleKey.displayName) tap → toggle", category: .hotkey)
+            outputContinuation.yield(.toggle)
+        } else if !isDown {
+            toggleKeyDown = false
         }
     }
 

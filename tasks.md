@@ -30,11 +30,11 @@
 - verify: swift test --filter OutputManagerTests
 
 ## Task 4
-- desc: Implement IntentResolver with fixed command vocabulary, confidence floor, and OPEN-mode isolation timing rules
+- desc: Implement IntentResolver with fixed command vocabulary, confidence floor, and isolation timing rules
 - deps: Task 1
 - passes: true
 - ac:
-  - ROGER and ABORT resolve to commands only when the utterance satisfies the full OPEN-mode isolation algorithm and current input mode permits command handling
+  - ROGER and ABORT resolve to commands only when the utterance satisfies the isolation algorithm (endedBySilence + short duration)
   - Non-vocabulary text never resolves to a command regardless of timing metadata
   - Low-confidence transcriptions resolve to discard before injection or command execution
 - verify: swift test --filter IntentResolverTests
@@ -50,23 +50,21 @@
 - verify: swift test --filter WhisperKitTranscriberTests
 
 ## Task 6
-- desc: Implement the audio pipeline using AVAudioEngine, 16kHz mono segment output, VAD segmentation, and forceEnd handling
+- desc: Implement the audio pipeline using AVAudioEngine, 16kHz mono segment output, and VAD segmentation
 - deps: Task 1
 - passes: true
 - ac:
   - AudioPipeline hides AVFoundation details and emits SpeechSegment values with normalized audio, duration, silenceBefore, trailingSilenceAfter, and endedBySilence metadata
-  - In PTT mode, forceEnd terminates the active segment immediately on key release even if VAD would continue
-  - In OPEN mode, VAD self-terminates utterances without caller-managed segmentation knobs
+  - VAD self-terminates utterances without caller-managed segmentation knobs
 - verify: swift test --filter AudioPipelineTests
 
 ## Task 7
-- desc: Implement the hotkey manager for right-side modifier handling, persistent mode toggling, and resolved hotkey event streaming
+- desc: Implement the hotkey manager for toggle key handling and resolved hotkey event streaming
 - deps: Task 1
 - passes: true
 - ac:
-  - Holding Right Command emits PTT begin and end events for dictation mode
-  - Holding Right Shift with Right Command emits command-mode PTT events, and command mode remains latched for the rest of that PTT hold
-  - Tapping Right Control toggles between PTT and OPEN modes and the selected mode persists for the app session
+  - Tapping Right Control emits a toggle event
+  - The toggle key is configurable via HotkeyBindings
 - verify: swift test --filter HotkeyManagerTests
 
 ## Task 8
@@ -74,9 +72,10 @@
 - deps: Task 3, Task 4, Task 5, Task 6, Task 7
 - passes: true
 - ac:
-  - PTT dictation events transcribe and append resolved text while discards become no-ops
-  - PTT command events can only execute ROGER or ABORT outcomes and never inject text
-  - OPEN mode routes isolated commands to send or clear and routes normal utterances to append through the same coordinator
+  - Toggle on starts recording, toggle off stops
+  - Transcribed utterances append resolved text while discards become no-ops
+  - Isolated command words route to send or clear through the same coordinator
+  - After processing a segment, recording auto-restarts
 - verify: swift test --filter SessionControllerIntegrationTests
 
 ## Task 9
@@ -86,7 +85,6 @@
 - ac:
   - The HUD presents in a non-key, click-through floating window that never steals focus from the active terminal
   - Recording shows live partial text, transcribing shows activity, injected fades out, cleared dismisses immediately, output failures show a short visible error, and idle stays hidden
-  - HUD mode indication reflects the current PTT or OPEN state while remaining driven only by published controller state
 - verify: xcodebuild test -scheme Egregore -destination 'platform=macOS' -only-testing:EgregoreTests/HUDStateTests
 
 ## Task 10
@@ -94,7 +92,7 @@
 - deps: Task 3, Task 4, Task 5, Task 8
 - passes: true
 - ac:
-  - Property-based tests cover IntentResolver command matching, non-command rejection, low-confidence discard behavior, full OPEN-mode isolation rejection paths, and OutputManager buffer semantics
+  - Property-based tests cover IntentResolver command matching, non-command rejection, low-confidence discard behavior, and OutputManager buffer semantics
   - End-to-end tests exercise transcriber, resolver, output formatting, and full mocked pipeline flows without requiring audio hardware
   - The suite names or groups tests by spec feature so passing results can be traced back to the required behaviors and milestones
 - verify: swift test
@@ -107,14 +105,14 @@
   - The app writes timestamped logs for the main execution path to a user-owned file under Egregore's local app data
   - Failures that currently no-op silently, especially shell session lookup and pipe writes, emit explicit error logs with enough context to debug the failing step
   - The menu bar UI exposes the active log location or a direct way to inspect recent diagnostics during manual testing
-- verify: swift test && manual check that launching the app produces a readable log file and records a mode toggle plus an OPEN-mode utterance attempt
+- verify: swift test && manual check that launching the app produces a readable log file
 
 ## Task 12
 - desc: Make terminal injection and command dispatch observable and reliable against a real zsh session after shell integration install
 - deps: Task 11
 - passes: true
 - ac:
-  - OPEN-mode and PTT final transcriptions either append to the active terminal buffer or emit logs showing exactly where resolution failed
+  - Final transcriptions either append to the active terminal buffer or emit logs showing exactly where resolution failed
   - Session discovery logs include the frontmost app PID, shell PID traversal, matched registry PID ancestry, and prompt/focus metadata used for candidate ranking without exposing implementation details to callers
   - ROGER and ABORT attempts log whether the app executed send or clear and whether shell targeting was applied, refused as ambiguous, or failed in delivery
   - The managed zsh snippet supports an opt-in debug log that proves handler entry and post-mutation buffer state during manual debugging
@@ -125,21 +123,19 @@
 - deps: Task 11
 - passes: true
 - ac:
-  - The default PTT and mode-toggle bindings work on common external keyboards, including Windows-layout Mac keyboards that lack a distinct right option
-  - The menu bar UI shows the current bindings in user-facing language instead of hardcoded stale text
+  - The default toggle binding works on common external keyboards
+  - The menu bar UI shows the current binding in user-facing language instead of hardcoded stale text
   - Manual testing can confirm which physical key events the app is receiving when a binding does not behave as expected
-- verify: swift test --filter HotkeyManagerTests && manual check that the configured PTT and OPEN toggle bindings register on the target keyboard
+- verify: swift test --filter HotkeyManagerTests && manual check that the configured toggle binding registers on the target keyboard
 
 ## Task 14
-- desc: Implement real-time speech-to-text feedback so both PTT and OPEN mode show a live transcript in the HUD during capture and inject the finalized text when the utterance ends
+- desc: Implement real-time speech-to-text feedback so the HUD shows a live transcript during capture and injects the finalized text when the utterance ends
 - deps: Task 11, Task 12
 - passes: true
 - ac:
   - While an utterance is actively being captured, the HUD shows incrementally updated transcript text with low enough latency to provide immediate user feedback
-  - In PTT mode, releasing the key finalizes the current utterance, dismisses the HUD transcript state, and injects the finalized text into the focused terminal session
-  - In OPEN mode, a completed utterance detected by silence finalizes the current utterance, dismisses the HUD transcript state, and injects the finalized text into the focused terminal session
-  - The live transcript behavior is implemented consistently across PTT and OPEN mode, with only the utterance-finalization trigger differing between modes
-- verify: swift test --filter HUDStateTests && manual check of one PTT utterance and one OPEN-mode utterance from live HUD transcript through final terminal injection
+  - A completed utterance detected by silence finalizes the transcript, dismisses the HUD transcript state, and injects the finalized text into the focused terminal session
+- verify: swift test --filter HUDStateTests && manual check of one utterance from live HUD transcript through final terminal injection
 
 ## Task 15
 - desc: Replace snapshot-final HUD updates with true incremental partial transcription that stays visible long enough to be perceptible during live capture
@@ -147,19 +143,18 @@
 - passes: false
 - ac:
   - During an active utterance, the HUD updates from WhisperKit callback partials rather than waiting for a completed snapshot decode result
-  - Partial transcript updates are frequent and stable enough to be visually perceived in both PTT and OPEN mode before final injection occurs
+  - Partial transcript updates are frequent and stable enough to be visually perceived before final injection occurs
   - Final transcript completion still clears the live partial state and transitions cleanly into transcribing/injected behavior without stale partial flashes
-- verify: swift test --filter HUDStateTests && manual check that a multi-word utterance visibly updates in place while speaking in both PTT and OPEN mode
+- verify: swift test --filter HUDStateTests && manual check that a multi-word utterance visibly updates in place while speaking
 
 ## Task 16
 - desc: Make spoken ROGER and ABORT resolve to commands reliably in real use instead of falling through to normal text injection
 - deps: Task 4, Task 6, Task 8, Task 12
 - passes: false
 - ac:
-  - In PTT command mode, spoken `ROGER` and `ABORT` trigger send and clear outcomes respectively and never append literal command text
-  - In OPEN mode, naturally spoken standalone `ROGER` and `ABORT` trigger send and clear outcomes reliably enough for treadmill use without requiring brittle silence timing that commonly misclassifies them as dictation
+  - Naturally spoken standalone `ROGER` and `ABORT` trigger send and clear outcomes reliably enough for treadmill use without requiring brittle silence timing that commonly misclassifies them as dictation
   - Normal dictation containing command words in longer phrases still injects as text unless the utterance satisfies the intended command criteria
-- verify: swift test --filter IntentResolverTests && swift test --filter SessionControllerIntegrationTests && manual check that standalone spoken `ROGER` and `ABORT` do not append to the terminal in either mode
+- verify: swift test --filter IntentResolverTests && swift test --filter SessionControllerIntegrationTests && manual check that standalone spoken `ROGER` and `ABORT` do not append to the terminal
 
 ## Task 17
 - desc: Add higher-confidence integration proof for live partial HUD behavior and real command execution so mocked tests cannot mask regressions

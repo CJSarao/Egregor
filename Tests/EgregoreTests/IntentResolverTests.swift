@@ -26,102 +26,62 @@ final class IntentResolverTests: XCTestCase {
 
     // MARK: - Low confidence → discard
 
-    func testLowConfidenceDiscardedInDictationMode() {
+    func testLowConfidenceDiscarded() {
         let result = makeResult(text: "hello world", confidence: 0.1)
-        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .discard)
-    }
-
-    func testLowConfidenceDiscardedInCommandMode() {
-        let result = makeResult(text: "ROGER", confidence: 0.1)
-        XCTAssertEqual(resolver.resolve(result, mode: .command), .discard)
+        XCTAssertEqual(resolver.resolve(result), .discard)
     }
 
     func testLowConfidenceVocabularyWordDiscardedBeforeInjection() {
         let result = makeResult(text: "ABORT", confidence: 0.05, silenceBefore: .milliseconds(2000), duration: .milliseconds(500))
-        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .discard)
+        XCTAssertEqual(resolver.resolve(result), .discard)
     }
 
-    // MARK: - PTT command mode
+    // MARK: - Dictation: non-vocabulary injects
 
-    func testCommandModeRogerReturnsRoger() {
-        let result = makeResult(text: "ROGER")
-        XCTAssertEqual(resolver.resolve(result, mode: .command), .command(.roger))
-    }
-
-    func testCommandModeAbortReturnsAbort() {
-        let result = makeResult(text: "ABORT")
-        XCTAssertEqual(resolver.resolve(result, mode: .command), .command(.abort))
-    }
-
-    func testCommandModeLowercaseVocabularyMatches() {
-        let result = makeResult(text: "roger")
-        XCTAssertEqual(resolver.resolve(result, mode: .command), .command(.roger))
-    }
-
-    func testCommandModeNonVocabularyDiscardsRegardlessOfTiming() {
-        for text in ["hello", "send", "clear", "go", "stop", "run tests"] {
-            let result = makeResult(text: text)
-            XCTAssertEqual(
-                resolver.resolve(result, mode: .command),
-                .discard,
-                "Expected discard for '\(text)' in command mode"
-            )
-        }
-    }
-
-    func testCommandModeNeverInjects() {
-        let result = makeResult(text: "hello world")
-        let intent = resolver.resolve(result, mode: .command)
-        if case .inject = intent { XCTFail("Command mode must never inject") }
-    }
-
-    // MARK: - PTT dictation mode / OPEN normal utterances
-
-    func testDictationModeNonVocabularyInjects() {
+    func testNonVocabularyInjects() {
         let result = makeResult(text: "git status", endedBySilence: false)
-        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .inject("git status"))
+        XCTAssertEqual(resolver.resolve(result), .inject("git status"))
     }
 
-    func testDictationModeNonVocabularyWithIsolationTimingStillInjects() {
+    func testNonVocabularyWithIsolationTimingStillInjects() {
         let result = makeResult(text: "hello", silenceBefore: .milliseconds(2000), duration: .milliseconds(500))
-        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .inject("hello"))
+        XCTAssertEqual(resolver.resolve(result), .inject("hello"))
     }
 
-    func testPTTStyleVocabularyInjectsWhenUtteranceDidNotEndBySilence() {
+    func testVocabularyInjectsWhenUtteranceDidNotEndBySilence() {
         let result = makeResult(text: "ROGER",
                                 silenceBefore: .milliseconds(2000),
                                 duration: .milliseconds(800),
                                 trailingSilenceAfter: .milliseconds(200),
                                 endedBySilence: false)
-        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .inject("ROGER"))
+        XCTAssertEqual(resolver.resolve(result), .inject("ROGER"))
     }
 
-    // MARK: - OPEN mode isolation algorithm (dictation mode + timing)
+    // MARK: - Isolation algorithm: standalone command detection
 
-    func testIsolatedRogerReturnsCommandInDictationMode() {
+    func testIsolatedRogerReturnsCommand() {
         let result = makeResult(text: "ROGER", silenceBefore: .milliseconds(2000), duration: .milliseconds(800))
-        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .command(.roger))
+        XCTAssertEqual(resolver.resolve(result), .command(.roger))
     }
 
-    func testIsolatedAbortReturnsCommandInDictationMode() {
+    func testIsolatedAbortReturnsCommand() {
         let result = makeResult(text: "ABORT", silenceBefore: .milliseconds(2000), duration: .milliseconds(800))
-        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .command(.abort))
+        XCTAssertEqual(resolver.resolve(result), .command(.abort))
     }
 
     func testVocabularyWithLowSilenceBeforeStillResolvesCommand() {
         let result = makeResult(text: "ROGER", silenceBefore: .milliseconds(1000), duration: .milliseconds(800))
-        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .command(.roger))
+        XCTAssertEqual(resolver.resolve(result), .command(.roger))
     }
 
     func testVocabularyWithZeroSilenceBeforeStillResolvesCommand() {
         let result = makeResult(text: "ROGER", silenceBefore: .zero, duration: .milliseconds(800))
-        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .command(.roger))
+        XCTAssertEqual(resolver.resolve(result), .command(.roger))
     }
 
     func testVocabularyWithDurationAtOrAboveThresholdInjects() {
-        // duration must be LESS THAN 2000ms
         let result = makeResult(text: "ABORT", silenceBefore: .milliseconds(2000), duration: .milliseconds(2000))
-        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .inject("ABORT"))
+        XCTAssertEqual(resolver.resolve(result), .inject("ABORT"))
     }
 
     func testVocabularyWithLowTrailingSilenceStillResolvesCommand() {
@@ -129,7 +89,7 @@ final class IntentResolverTests: XCTestCase {
                                 silenceBefore: .milliseconds(2000),
                                 duration: .milliseconds(800),
                                 trailingSilenceAfter: .milliseconds(100))
-        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .command(.roger))
+        XCTAssertEqual(resolver.resolve(result), .command(.roger))
     }
 
     func testVocabularyNotEndedBySilenceInjects() {
@@ -137,12 +97,12 @@ final class IntentResolverTests: XCTestCase {
                                 silenceBefore: .milliseconds(2000),
                                 duration: .milliseconds(800),
                                 endedBySilence: false)
-        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .inject("ROGER"))
+        XCTAssertEqual(resolver.resolve(result), .inject("ROGER"))
     }
 
     func testVocabularyWithLongDurationInjects() {
         let result = makeResult(text: "ROGER", silenceBefore: .milliseconds(2000), duration: .milliseconds(3000))
-        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .inject("ROGER"))
+        XCTAssertEqual(resolver.resolve(result), .inject("ROGER"))
     }
 
     // MARK: - Non-vocabulary never produces command
@@ -155,7 +115,7 @@ final class IntentResolverTests: XCTestCase {
         ]
         for (silence, duration) in timings {
             let result = makeResult(text: "hello world", silenceBefore: silence, duration: duration)
-            let intent = resolver.resolve(result, mode: .dictation)
+            let intent = resolver.resolve(result)
             if case .command = intent {
                 XCTFail("Non-vocabulary text must never resolve to command (silence=\(silence), duration=\(duration))")
             }
@@ -165,7 +125,7 @@ final class IntentResolverTests: XCTestCase {
     func testPartialVocabularyMatchDoesNotCommand() {
         for text in ["ROGER that", "ABORT mission", "say ROGER", "ABORTED"] {
             let result = makeResult(text: text, silenceBefore: .milliseconds(2000), duration: .milliseconds(800))
-            let intent = resolver.resolve(result, mode: .dictation)
+            let intent = resolver.resolve(result)
             if case .command = intent {
                 XCTFail("Partial vocabulary match '\(text)' must not resolve to command")
             }
@@ -175,14 +135,13 @@ final class IntentResolverTests: XCTestCase {
     // MARK: - Confidence boundary
 
     func testConfidenceAtFloorIsAccepted() {
-        // Exactly at the floor should be accepted (>=)
         let result = makeResult(text: "git status", confidence: 0.3)
-        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .inject("git status"))
+        XCTAssertEqual(resolver.resolve(result), .inject("git status"))
     }
 
     func testConfidenceJustBelowFloorIsDiscarded() {
         let result = makeResult(text: "git status", confidence: 0.29)
-        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .discard)
+        XCTAssertEqual(resolver.resolve(result), .discard)
     }
 }
 
