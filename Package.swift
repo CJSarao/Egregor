@@ -9,14 +9,12 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/argmaxinc/WhisperKit", from: "0.16.0"),
-        .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", .upToNextMinor(from: "2.3.0")),
     ],
     targets: [
         .executableTarget(
             name: "Egregore",
             dependencies: [
                 .product(name: "WhisperKit", package: "whisperkit"),
-                .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
             ],
             path: "Sources/Egregore"
         ),

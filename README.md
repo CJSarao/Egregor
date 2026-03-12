@@ -36,7 +36,7 @@ Two voice commands (military-style to avoid false positives):
 
 ```bash
 swift build
-swift test       # 128 tests, no hardware needed
+swift test       # unit, property, and mocked integration tests; no hardware needed
 ```
 
 The binary lands in `.build/debug/Egregore`. On startup, Egregore begins prewarming WhisperKit in the background; if the model is missing, WhisperKit downloads it (~1 GB) to `~/.local/share/egregore/models/`.
@@ -67,7 +67,7 @@ Sources/Egregore/
 │   └── MenuBarView.swift           # Menu bar UI
 └── ShellIntegration/
     └── ShellIntegrationInstaller.swift # Installs the zsh snippet into ~/.zshrc
-Tests/EgregoreTests/              # 10 test files, 128 tests total
+Tests/EgregoreTests/              # unit, property, and mocked integration tests
 ```
 
 ## Architecture (for the Curious)
@@ -211,7 +211,7 @@ let pipeline = AVAudioEnginePipeline { callback in
 await pipeline.processChunk(someFakeAudioData)
 ```
 
-WhisperKitTranscriber uses the same pattern — a `@Sendable () async throws -> Engine` closure that tests replace with a stub returning canned results. The suite also includes PTY-backed shell integration tests so CI proves a real interactive zsh session receives FIFO writes and mutates shell state, not just that the app emitted the right bytes.
+WhisperKitTranscriber uses the same pattern — a `@Sendable () async throws -> Engine` closure that tests replace with a stub returning canned results. The current suite proves resolver, output, HUD, and coordinator behavior without hardware. PTY-backed shell integration proof is deferred to a later pass.
 
 ## Key Files to Read First
 
@@ -228,9 +228,8 @@ If you're studying this codebase, read in this order:
 | Package | What it does | Why it's here |
 |---|---|---|
 | [WhisperKit](https://github.com/argmaxinc/WhisperKit) | On-device speech recognition using Core ML | The transcription engine |
-| [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts) | Global hotkey registration | Wraps NSEvent monitors for the mode toggle key |
 
-Only these two. The project has a strict policy against adding dependencies — everything else is built with Apple's frameworks.
+WhisperKit is the only third-party dependency. The project has a strict policy against adding dependencies — everything else is built with Apple's frameworks.
 
 ## License
 

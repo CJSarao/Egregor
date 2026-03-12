@@ -10,12 +10,16 @@ final class IntentResolverTests: XCTestCase {
         text: String,
         confidence: Float = 0.9,
         silenceBefore: Duration = .milliseconds(2000),
-        duration: Duration = .milliseconds(800)
+        duration: Duration = .milliseconds(800),
+        trailingSilenceAfter: Duration = .milliseconds(800),
+        endedBySilence: Bool = true
     ) -> TranscriptionResult {
         let segment = SpeechSegment(
             audio: [],
             silenceBefore: silenceBefore,
-            duration: duration
+            duration: duration,
+            trailingSilenceAfter: trailingSilenceAfter,
+            endedBySilence: endedBySilence
         )
         return TranscriptionResult(text: text, confidence: confidence, segment: segment)
     }
@@ -74,13 +78,22 @@ final class IntentResolverTests: XCTestCase {
     // MARK: - PTT dictation mode / OPEN normal utterances
 
     func testDictationModeNonVocabularyInjects() {
-        let result = makeResult(text: "git status")
+        let result = makeResult(text: "git status", endedBySilence: false)
         XCTAssertEqual(resolver.resolve(result, mode: .dictation), .inject("git status"))
     }
 
     func testDictationModeNonVocabularyWithIsolationTimingStillInjects() {
         let result = makeResult(text: "hello", silenceBefore: .milliseconds(2000), duration: .milliseconds(500))
         XCTAssertEqual(resolver.resolve(result, mode: .dictation), .inject("hello"))
+    }
+
+    func testPTTStyleVocabularyInjectsWhenUtteranceDidNotEndBySilence() {
+        let result = makeResult(text: "ROGER",
+                                silenceBefore: .milliseconds(2000),
+                                duration: .milliseconds(800),
+                                trailingSilenceAfter: .milliseconds(200),
+                                endedBySilence: false)
+        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .inject("ROGER"))
     }
 
     // MARK: - OPEN mode isolation algorithm (dictation mode + timing)
@@ -110,6 +123,14 @@ final class IntentResolverTests: XCTestCase {
         // duration must be LESS THAN 2000ms
         let result = makeResult(text: "ABORT", silenceBefore: .milliseconds(2000), duration: .milliseconds(2000))
         XCTAssertEqual(resolver.resolve(result, mode: .dictation), .inject("ABORT"))
+    }
+
+    func testVocabularyWithInsufficientTrailingSilenceInjects() {
+        let result = makeResult(text: "ROGER",
+                                silenceBefore: .milliseconds(2000),
+                                duration: .milliseconds(800),
+                                trailingSilenceAfter: .milliseconds(600))
+        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .inject("ROGER"))
     }
 
     func testVocabularyWithLongDurationInjects() {
@@ -168,4 +189,3 @@ extension Intent: Equatable {
         }
     }
 }
-

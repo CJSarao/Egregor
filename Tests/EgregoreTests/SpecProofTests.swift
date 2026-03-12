@@ -13,22 +13,31 @@ final class IntentResolverPropertyTests: XCTestCase {
 
     // MARK: Helpers
 
-    private func randomIsolatedTiming() -> (silence: Duration, duration: Duration) {
+    private func randomIsolatedTiming() -> (silence: Duration, duration: Duration, trailingSilence: Duration, endedBySilence: Bool) {
         let silence = Duration.milliseconds(Int.random(in: 1501...5000))
         let dur     = Duration.milliseconds(Int.random(in: 50...1999))
-        return (silence, dur)
+        let trailingSilence = Duration.milliseconds(Int.random(in: 800...1600))
+        return (silence, dur, trailingSilence, true)
     }
 
-    private func randomNonIsolatedTiming() -> (silence: Duration, duration: Duration) {
-        // Either silence ≤ 1500 OR duration ≥ 2000 (or both)
-        let breakSilence = Bool.random()
-        let silence = breakSilence
-            ? Duration.milliseconds(Int.random(in: 0...1500))
-            : Duration.milliseconds(Int.random(in: 1501...5000))
-        let dur = breakSilence
-            ? Duration.milliseconds(Int.random(in: 50...4000))
-            : Duration.milliseconds(Int.random(in: 2000...5000))
-        return (silence, dur)
+    private func randomNonIsolatedTiming() -> (silence: Duration, duration: Duration, trailingSilence: Duration, endedBySilence: Bool) {
+        switch Int.random(in: 0...2) {
+        case 0:
+            return (.milliseconds(Int.random(in: 0...1500)),
+                    .milliseconds(Int.random(in: 50...1999)),
+                    .milliseconds(Int.random(in: 800...1600)),
+                    true)
+        case 1:
+            return (.milliseconds(Int.random(in: 1501...5000)),
+                    .milliseconds(Int.random(in: 2000...5000)),
+                    .milliseconds(Int.random(in: 800...1600)),
+                    true)
+        default:
+            return (.milliseconds(Int.random(in: 1501...5000)),
+                    .milliseconds(Int.random(in: 50...1999)),
+                    .milliseconds(Int.random(in: 0...799)),
+                    Bool.random())
+        }
     }
 
     private func randomNonVocabularyText() -> String {
@@ -39,11 +48,15 @@ final class IntentResolverPropertyTests: XCTestCase {
         return (0..<count).map { _ in words.randomElement()! }.joined(separator: " ")
     }
 
-    private func makeResult(text: String, confidence: Float, silence: Duration, duration: Duration) -> TranscriptionResult {
+    private func makeResult(text: String, confidence: Float, silence: Duration, duration: Duration, trailingSilence: Duration = .milliseconds(800), endedBySilence: Bool = true) -> TranscriptionResult {
         TranscriptionResult(
             text: text,
             confidence: confidence,
-            segment: SpeechSegment(audio: [], silenceBefore: silence, duration: duration)
+            segment: SpeechSegment(audio: [],
+                                  silenceBefore: silence,
+                                  duration: duration,
+                                  trailingSilenceAfter: trailingSilence,
+                                  endedBySilence: endedBySilence)
         )
     }
 
@@ -54,8 +67,8 @@ final class IntentResolverPropertyTests: XCTestCase {
         for _ in 0..<iterations {
             let word = vocabulary.randomElement()!
             let confidence = Float.random(in: 0.3...1.0)
-            let (silence, dur) = randomIsolatedTiming()
-            let result = makeResult(text: word, confidence: confidence, silence: silence, duration: dur)
+            let (silence, dur, trailingSilence, endedBySilence) = randomIsolatedTiming()
+            let result = makeResult(text: word, confidence: confidence, silence: silence, duration: dur, trailingSilence: trailingSilence, endedBySilence: endedBySilence)
 
             let intent = resolver.resolve(result, mode: .dictation)
             guard case .command = intent else {
@@ -92,8 +105,8 @@ final class IntentResolverPropertyTests: XCTestCase {
             let text = randomNonVocabularyText()
             let mode = modes.randomElement()!
             let confidence = Float.random(in: 0.3...1.0)
-            let (silence, dur) = randomIsolatedTiming()
-            let result = makeResult(text: text, confidence: confidence, silence: silence, duration: dur)
+            let (silence, dur, trailingSilence, endedBySilence) = randomIsolatedTiming()
+            let result = makeResult(text: text, confidence: confidence, silence: silence, duration: dur, trailingSilence: trailingSilence, endedBySilence: endedBySilence)
 
             let intent = resolver.resolve(result, mode: mode)
             if case .command = intent {
@@ -129,8 +142,8 @@ final class IntentResolverPropertyTests: XCTestCase {
         for _ in 0..<iterations {
             let word = vocabulary.randomElement()!
             let confidence = Float.random(in: 0.3...1.0)
-            let (silence, dur) = randomNonIsolatedTiming()
-            let result = makeResult(text: word, confidence: confidence, silence: silence, duration: dur)
+            let (silence, dur, trailingSilence, endedBySilence) = randomNonIsolatedTiming()
+            let result = makeResult(text: word, confidence: confidence, silence: silence, duration: dur, trailingSilence: trailingSilence, endedBySilence: endedBySilence)
 
             let intent = resolver.resolve(result, mode: .dictation)
             XCTAssertEqual(
@@ -227,10 +240,15 @@ final class SpecEndToEndTests: XCTestCase {
 
     private func makeSegment(
         silenceBefore: Duration = .milliseconds(2000),
-        duration: Duration = .milliseconds(800)
+        duration: Duration = .milliseconds(800),
+        trailingSilenceAfter: Duration = .zero,
+        endedBySilence: Bool = false
     ) -> SpeechSegment {
         SpeechSegment(audio: [Float](repeating: 0.1, count: 1600),
-                      silenceBefore: silenceBefore, duration: duration)
+                      silenceBefore: silenceBefore,
+                      duration: duration,
+                      trailingSilenceAfter: trailingSilenceAfter,
+                      endedBySilence: endedBySilence)
     }
 
     // MARK: E2E Milestone 2 — Transcriber produces text from synthesized audio
@@ -247,6 +265,8 @@ final class SpecEndToEndTests: XCTestCase {
         XCTAssertGreaterThan(result.confidence, 0.3)
         XCTAssertEqual(result.segment.silenceBefore, segment.silenceBefore)
         XCTAssertEqual(result.segment.duration, segment.duration)
+        XCTAssertEqual(result.segment.trailingSilenceAfter, segment.trailingSilenceAfter)
+        XCTAssertEqual(result.segment.endedBySilence, segment.endedBySilence)
     }
 
     // MARK: E2E Milestone 3 — IntentResolver all branches
@@ -260,14 +280,20 @@ final class SpecEndToEndTests: XCTestCase {
 
     func testResolverDictationIsolatedRoger() {
         let resolver = EgregoreIntentResolver()
-        let segment = makeSegment(silenceBefore: .milliseconds(2000), duration: .milliseconds(500))
+        let segment = makeSegment(silenceBefore: .milliseconds(2000),
+                                  duration: .milliseconds(500),
+                                  trailingSilenceAfter: .milliseconds(900),
+                                  endedBySilence: true)
         let result = TranscriptionResult(text: "ROGER", confidence: 0.9, segment: segment)
         XCTAssertEqual(resolver.resolve(result, mode: .dictation), .command(.roger))
     }
 
     func testResolverDictationIsolatedAbort() {
         let resolver = EgregoreIntentResolver()
-        let segment = makeSegment(silenceBefore: .milliseconds(2000), duration: .milliseconds(500))
+        let segment = makeSegment(silenceBefore: .milliseconds(2000),
+                                  duration: .milliseconds(500),
+                                  trailingSilenceAfter: .milliseconds(900),
+                                  endedBySilence: true)
         let result = TranscriptionResult(text: "ABORT", confidence: 0.9, segment: segment)
         XCTAssertEqual(resolver.resolve(result, mode: .dictation), .command(.abort))
     }
@@ -438,7 +464,10 @@ final class SpecEndToEndTests: XCTestCase {
         let pipeline = MockAudioPipeline()
         let txr      = MockTranscriber(
             TranscriptionResult(text: "ROGER", confidence: 0.9,
-                                segment: makeSegment(silenceBefore: .milliseconds(2000), duration: .milliseconds(800)))
+                                segment: makeSegment(silenceBefore: .milliseconds(2000),
+                                                     duration: .milliseconds(800),
+                                                     trailingSilenceAfter: .milliseconds(900),
+                                                     endedBySilence: true))
         )
         let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
                                      transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
@@ -446,7 +475,10 @@ final class SpecEndToEndTests: XCTestCase {
 
         hotkeys.emit(.modeToggled)
         try await Task.sleep(nanoseconds: 30_000_000)
-        await pipeline.emitSegment(makeSegment(silenceBefore: .milliseconds(2000), duration: .milliseconds(800)))
+        await pipeline.emitSegment(makeSegment(silenceBefore: .milliseconds(2000),
+                                               duration: .milliseconds(800),
+                                               trailingSilenceAfter: .milliseconds(900),
+                                               endedBySilence: true))
 
         await fulfillment(of: [exp], timeout: 2)
         XCTAssertEqual(output.sendCount, 1)
@@ -462,7 +494,10 @@ final class SpecEndToEndTests: XCTestCase {
         let pipeline = MockAudioPipeline()
         let txr      = MockTranscriber(
             TranscriptionResult(text: "docker ps", confidence: 0.85,
-                                segment: makeSegment(silenceBefore: .milliseconds(200), duration: .milliseconds(1500)))
+                                segment: makeSegment(silenceBefore: .milliseconds(200),
+                                                     duration: .milliseconds(1500),
+                                                     trailingSilenceAfter: .milliseconds(900),
+                                                     endedBySilence: true))
         )
         let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
                                      transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
@@ -470,7 +505,10 @@ final class SpecEndToEndTests: XCTestCase {
 
         hotkeys.emit(.modeToggled)
         try await Task.sleep(nanoseconds: 30_000_000)
-        await pipeline.emitSegment(makeSegment(silenceBefore: .milliseconds(200), duration: .milliseconds(1500)))
+        await pipeline.emitSegment(makeSegment(silenceBefore: .milliseconds(200),
+                                               duration: .milliseconds(1500),
+                                               trailingSilenceAfter: .milliseconds(900),
+                                               endedBySilence: true))
 
         await fulfillment(of: [exp], timeout: 2)
         XCTAssertEqual(output.appended, ["docker ps"])
@@ -493,7 +531,10 @@ final class SpecEndToEndTests: XCTestCase {
             TranscriptionResult(text: "status", confidence: 0.9,
                                 segment: makeSegment(silenceBefore: .milliseconds(200))),
             TranscriptionResult(text: "ROGER", confidence: 0.9,
-                                segment: makeSegment(silenceBefore: .milliseconds(2000), duration: .milliseconds(500)))
+                                segment: makeSegment(silenceBefore: .milliseconds(2000),
+                                                     duration: .milliseconds(500),
+                                                     trailingSilenceAfter: .milliseconds(900),
+                                                     endedBySilence: true))
         ]
 
         let txr = SequentialMockTranscriber(results: results)
@@ -508,10 +549,77 @@ final class SpecEndToEndTests: XCTestCase {
         try await Task.sleep(nanoseconds: 50_000_000)
         await pipeline.emitSegment(makeSegment(silenceBefore: .milliseconds(200)))
         try await Task.sleep(nanoseconds: 50_000_000)
-        await pipeline.emitSegment(makeSegment(silenceBefore: .milliseconds(2000), duration: .milliseconds(500)))
+        await pipeline.emitSegment(makeSegment(silenceBefore: .milliseconds(2000),
+                                               duration: .milliseconds(500),
+                                               trailingSilenceAfter: .milliseconds(900),
+                                               endedBySilence: true))
 
         await fulfillment(of: [sendExp], timeout: 3)
         XCTAssertEqual(output.appended, ["git", "status"])
+        XCTAssertEqual(output.sendCount, 1)
+    }
+
+    func testFullPipelineAppendAbortAppendRogerSequence() async throws {
+        let output = MockOutputManager()
+        let sendExp = expectation(description: "send after clear and re-append")
+        output.onSend = { sendExp.fulfill() }
+
+        let hotkeys  = MockHotkeyManager()
+        let pipeline = MockAudioPipeline()
+        let results: [TranscriptionResult] = [
+            TranscriptionResult(text: "git status", confidence: 0.9,
+                                segment: makeSegment(silenceBefore: .milliseconds(200),
+                                                     duration: .milliseconds(900),
+                                                     trailingSilenceAfter: .milliseconds(900),
+                                                     endedBySilence: true)),
+            TranscriptionResult(text: "ABORT", confidence: 0.9,
+                                segment: makeSegment(silenceBefore: .milliseconds(2000),
+                                                     duration: .milliseconds(500),
+                                                     trailingSilenceAfter: .milliseconds(900),
+                                                     endedBySilence: true)),
+            TranscriptionResult(text: "git diff", confidence: 0.9,
+                                segment: makeSegment(silenceBefore: .milliseconds(200),
+                                                     duration: .milliseconds(900),
+                                                     trailingSilenceAfter: .milliseconds(900),
+                                                     endedBySilence: true)),
+            TranscriptionResult(text: "ROGER", confidence: 0.9,
+                                segment: makeSegment(silenceBefore: .milliseconds(2000),
+                                                     duration: .milliseconds(500),
+                                                     trailingSilenceAfter: .milliseconds(900),
+                                                     endedBySilence: true))
+        ]
+
+        let txr = SequentialMockTranscriber(results: results)
+        let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
+                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        await ctrl.start()
+
+        hotkeys.emit(.modeToggled)
+        try await Task.sleep(nanoseconds: 30_000_000)
+
+        await pipeline.emitSegment(makeSegment(silenceBefore: .milliseconds(200),
+                                               duration: .milliseconds(900),
+                                               trailingSilenceAfter: .milliseconds(900),
+                                               endedBySilence: true))
+        try await Task.sleep(nanoseconds: 50_000_000)
+        await pipeline.emitSegment(makeSegment(silenceBefore: .milliseconds(2000),
+                                               duration: .milliseconds(500),
+                                               trailingSilenceAfter: .milliseconds(900),
+                                               endedBySilence: true))
+        try await Task.sleep(nanoseconds: 50_000_000)
+        await pipeline.emitSegment(makeSegment(silenceBefore: .milliseconds(200),
+                                               duration: .milliseconds(900),
+                                               trailingSilenceAfter: .milliseconds(900),
+                                               endedBySilence: true))
+        try await Task.sleep(nanoseconds: 50_000_000)
+        await pipeline.emitSegment(makeSegment(silenceBefore: .milliseconds(2000),
+                                               duration: .milliseconds(500),
+                                               trailingSilenceAfter: .milliseconds(900),
+                                               endedBySilence: true))
+
+        await fulfillment(of: [sendExp], timeout: 3)
+        XCTAssertEqual(output.appended, ["git status", "git diff"])
+        XCTAssertEqual(output.clearCount, 1)
         XCTAssertEqual(output.sendCount, 1)
     }
 

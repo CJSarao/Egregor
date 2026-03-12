@@ -72,13 +72,13 @@ For any significant abstraction, consider at least two approaches before committ
 | Transcription | WhisperKit (`argmaxinc/whisperkit-coreml`) | Core ML, Apple Neural Engine |
 | Model | `openai_whisper-large-v3_turbo` | Best latency/accuracy tradeoff |
 | Model storage | `~/.local/share/egregore/models/` | User-owned, inspectable |
-| Hotkeys | `KeyboardShortcuts` (sindresorhus) | Wraps NSEvent global monitors |
+| Hotkeys | `AppKit` / `NSEvent` | Global modifier-key monitoring |
 | Shell integration | ZLE fd watcher (zsh) | Terminal-agnostic, shell-level |
 | Session registry | `~/.config/egregore/sessions/` | Per-session pipe registration |
 | Session activity | `~/.config/egregore/activity/` | Per-session last-active markers for focused-shell selection |
 
 ### Dependencies Policy
-Only WhisperKit and KeyboardShortcuts are permitted as third-party dependencies. Any addition requires explicit justification against implementing the functionality directly.
+Only WhisperKit is currently declared as a third-party dependency. Any additional dependency requires explicit justification against implementing the functionality directly.
 
 ---
 
@@ -107,7 +107,7 @@ Dedicated hotkey switches between PTT and OPEN. State persists for the session. 
 |---|---|---|
 | PTT record | `Right Command (⌘)` hold | `NSEvent flagsChanged` |
 | PTT command mode | `Right Shift + Right Command` hold | `NSEvent flagsChanged` |
-| Mode toggle (PTT ↔ OPEN) | `Right Control (^)` tap | `KeyboardShortcuts` |
+| Mode toggle (PTT ↔ OPEN) | `Right Control (^)` tap | `NSEvent flagsChanged` |
 
 All defaults use right-side modifier keys only. No conflicts with terminal control sequences, common IDE shortcuts, or macOS system shortcuts. Comfortable to reach without looking — suitable for treadmill use.
 
@@ -132,8 +132,8 @@ Vocabulary is fixed. No user configuration.
 utterance arrives
   silenceBefore > 1500ms  AND
   duration < 2000ms        AND
-  [hold 800ms for trailing silence]  AND
-  no further speech detected         AND
+  trailingSilenceAfter >= 800ms      AND
+  endedBySilence == true             AND
   text matches command vocabulary
   → Intent.command(_)
 
@@ -141,7 +141,7 @@ else
   → Intent.inject(text)
 ```
 
-All thresholds are compile-time constants inside `IntentResolver`. Not exposed to callers or users. May be tuned during initial UX development then fixed.
+The timing thresholds are compile-time constants inside the audio pipeline and `IntentResolver`. Not exposed to callers or users. May be tuned during initial UX development then fixed.
 
 ---
 
@@ -162,6 +162,8 @@ struct SpeechSegment {
     let audio: [Float]           // 16kHz mono Float32
     let silenceBefore: Duration  // elapsed since last segment ended
     let duration: Duration
+    let trailingSilenceAfter: Duration  // silence accumulated after speech before emission
+    let endedBySilence: Bool            // true only when VAD, not forceEnd/stop, closed the utterance
 }
 
 struct SpeechCaptureSnapshot {
@@ -170,7 +172,7 @@ struct SpeechCaptureSnapshot {
 }
 ```
 
-Hides: AVFoundation setup, audio format config, VAD algorithm, buffer accumulation, threading. Callers never touch AVFoundation.
+Hides: AVFoundation setup, audio format config, VAD algorithm, buffer accumulation, segment termination details, threading. Callers never touch AVFoundation.
 
 In PTT mode: `forceEnd()` overrides VAD on key release. In OPEN mode: VAD self-terminates segments. This difference is entirely internal.
 
@@ -195,7 +197,7 @@ enum InputMode {
 }
 ```
 
-Hides: NSEvent global monitors, modifier key tracking, KeyboardShortcuts integration, Accessibility permissions. Callers receive resolved intent of key combinations only.
+Hides: NSEvent global monitors, modifier key tracking, and Accessibility permissions. Callers receive resolved intent of key combinations only.
 
 ---
 
@@ -327,6 +329,7 @@ ZLE file descriptor watcher. Terminal-emulator agnostic — works in Ghostty, Te
 # Egregore integration — managed by Egregore.app
 VOICE_PIPE="/tmp/egregore-$$.pipe"
 VOICE_REGISTRY="$HOME/.config/egregore/sessions"
+VOICE_ACTIVITY="$HOME/.config/egregore/activity"
 VOICE_DEBUG="${EGREGORE_SHELL_DEBUG:-0}"
 VOICE_DEBUG_LOG="${EGREGORE_SHELL_DEBUG_LOG:-$HOME/.local/share/egregore/logs/shell-integration.log}"
 
@@ -336,11 +339,17 @@ _egregore_debug() {
     print -r -- "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] [shell] $1" >> "$VOICE_DEBUG_LOG"
 }
 
+_egregore_mark_active() {
+    mkdir -p "$VOICE_ACTIVITY"
+    print -r -- "${EPOCHREALTIME:-0}" > "$VOICE_ACTIVITY/$$"
+}
+
 mkfifo "$VOICE_PIPE" 2>/dev/null
 exec {VOICE_FD}<>"$VOICE_PIPE"
 mkdir -p "$VOICE_REGISTRY"
 echo "$VOICE_PIPE" > "$VOICE_REGISTRY/$$"
-trap "rm -f '$VOICE_REGISTRY/$$' '$VOICE_PIPE'" EXIT
+_egregore_mark_active
+trap "exec {VOICE_FD}<&-; rm -f '$VOICE_REGISTRY/$$' '$VOICE_ACTIVITY/$$' '$VOICE_PIPE'" EXIT
 typeset -g EGREGORE_PENDING_ACTION=""
 typeset -g EGREGORE_PENDING_TEXT=""
 _egregore_debug "registered pid=$$ pipe=$VOICE_PIPE registry=$VOICE_REGISTRY fd=$VOICE_FD"
@@ -350,24 +359,37 @@ _egregore_apply_pending() {
         inject)
             BUFFER="${BUFFER:+$BUFFER }$EGREGORE_PENDING_TEXT"
             CURSOR=${#BUFFER}
+            _egregore_mark_active
             zle -R
             _egregore_debug "inject applied after_len=${#BUFFER} after_buffer<<<$BUFFER>>> after_cursor=$CURSOR"
             ;;
         clear)
             BUFFER=""
             CURSOR=0
+            _egregore_mark_active
             zle -R
             _egregore_debug "clear applied after_len=${#BUFFER} after_buffer<<<$BUFFER>>> after_cursor=$CURSOR"
+            ;;
+        *)
+            _egregore_debug "unknown pending action=${EGREGORE_PENDING_ACTION:-<empty>}"
             ;;
     esac
 }
 
 _egregore_inject() {
-    local action text
+    local action text line
     local before_buffer="$BUFFER"
     local before_cursor="$CURSOR"
     _egregore_debug "handler entry fd=$VOICE_FD before_len=${#before_buffer} before_buffer<<<$before_buffer>>> before_cursor=$before_cursor"
-    IFS='|' read -r action text <&$VOICE_FD || return 1
+    IFS= read -r -t 1 line <&$VOICE_FD || {
+        _egregore_debug "read failed fd=$VOICE_FD"
+        return 0
+    }
+    [[ -z "$line" ]] && return 0
+    action="${line%%|*}"
+    text="${line#*|}"
+    _egregore_debug "message action=${action:-<empty>} text_len=${#text} text<<<$text>>>"
+    [[ -z "$action" ]] && return 0
     EGREGORE_PENDING_ACTION="$action"
     EGREGORE_PENDING_TEXT="$text"
     zle _egregore_apply_pending
@@ -376,6 +398,9 @@ _egregore_inject() {
 zle -N _egregore_apply_pending
 zle -N _egregore_inject
 zle -F $VOICE_FD _egregore_inject
+autoload -Uz add-zsh-hook add-zle-hook-widget
+add-zsh-hook precmd _egregore_mark_active
+add-zle-hook-widget line-init _egregore_mark_active
 # End Egregore integration
 ```
 
@@ -390,7 +415,7 @@ zle -F $VOICE_FD _egregore_inject
 
 App presents a one-time "Install Shell Integration" prompt on first launch. Appends the snippet to `~/.zshrc` with explicit confirmation. Displays exactly what will be written and where. Uninstall: remove the marked block from `~/.zshrc` and delete `~/.config/egregore/`.
 
-When `EGREGORE_SHELL_DEBUG=1`, the shell snippet may write handler diagnostics to `EGREGORE_SHELL_DEBUG_LOG` for manual debugging and PTY-backed integration tests.
+When `EGREGORE_SHELL_DEBUG=1`, the shell snippet may write handler diagnostics to `EGREGORE_SHELL_DEBUG_LOG` for manual debugging. PTY-backed integration proof remains deferred.
 
 ---
 
@@ -417,13 +442,12 @@ Tests are **proof that the implementation satisfies the spec**. They are the pri
 
 **Property-based tests** for logic modules:
 
-- `IntentResolver`: for any transcription matching vocabulary text, with `silenceBefore > 1500ms` and `duration < 2000ms`, `resolve()` always returns `.command(_)` — never `.inject`, never `.discard`
+- `IntentResolver`: for any transcription matching vocabulary text, with `silenceBefore > 1500ms`, `duration < 2000ms`, `trailingSilenceAfter >= 800ms`, and `endedBySilence == true`, `resolve()` always returns `.command(_)` in dictation mode — never `.inject`, never `.discard`
 - `IntentResolver`: for any non-vocabulary text regardless of timing, `resolve()` never returns `.command(_)`
 - `IntentResolver`: for any transcription with confidence below threshold, `resolve()` always returns `.discard`
-- `OutputManager` (mocked pipe): any sequence of `append` calls followed by `clear` always results in empty buffer regardless of text content, length, or unicode composition
-- `OutputManager` (mocked pipe): multiple `append` calls always produce space-separated concatenation in pipe write order
-- Interactive zsh PTY: the managed shell snippet receives FIFO events and logs post-mutation shell state for at least the `inject` path
-- Interactive zsh PTY: shell debug logging proves handler entry, parsed action, and post-mutation buffer state without requiring microphone hardware
+- `OutputManager` (mocked pipe): any sequence of `append` calls followed by `clear` always ends with a final `clear|` message regardless of text content, length, or unicode composition
+- `OutputManager` (mocked pipe): multiple `append` calls always produce ordered `inject|...` messages in pipe write order
+- PTY-backed interactive `zsh` shell proof is deferred; current automated proof stops at mocked pipes plus shell-snippet installer coverage
 
 **End-to-end tests** for the pipeline (no hardware required — all inputs mocked):
 
@@ -432,7 +456,8 @@ Tests are **proof that the implementation satisfies the spec**. They are the pri
 - Known `TranscriptionResult` with timing metadata → `IntentResolver` → expected `Intent` for all cases
 - `Intent` sequence → `OutputManager` (mock shell) → expected pipe writes in correct order and format
 - Full pipeline: mock `AudioPipeline` emitting known segments → expected shell pipe output
-- Real interactive `zsh` running on a PTY with the managed snippet installed → expected shell debug log entries and post-mutation buffer state after pipe writes
+- Multi-step mocked flows: append, clear, append, and send outcomes through the same coordinator
+- Deferred follow-up: real interactive `zsh` running on a PTY with the managed snippet installed
 
 ### What Does Not Get Tested
 
@@ -464,7 +489,7 @@ Each milestone is independently verifiable. Milestones 1–3 require no hardware
 
 | # | Milestone | Verifiable by |
 |---|---|---|
-| 1 | Write known string to `OutputManager`, verify the shell handler mutates live editor state for injection via pipe, and confirm append/clear behavior manually | PTY integration test plus shell observation, no audio |
+| 1 | Write known string to `OutputManager`, verify mocked pipe delivery and shell snippet install/debug surfaces | Automated today; PTY shell proof deferred |
 | 2 | Pass hardcoded `[Float]` through `WhisperKitTranscriber`, receive non-empty text | Unit assertion, no mic |
 | 3 | Feed mock `TranscriptionResult` into `IntentResolver`, verify correct `Intent` for all branches | Property-based test suite |
 | 4 | `AVAudioEngine` tap running, `SpeechSegment` emitted correctly on real speech with VAD silence detection | Mic required |

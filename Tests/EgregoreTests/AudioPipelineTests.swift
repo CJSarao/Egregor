@@ -66,6 +66,9 @@ final class AudioPipelineTests: XCTestCase {
 
         let segment = await iter.next()
         XCTAssertNotNil(segment)
+        XCTAssertNotNil(segment)
+        XCTAssertGreaterThanOrEqual(segment!.trailingSilenceAfter, .milliseconds(800))
+        XCTAssertEqual(segment?.endedBySilence, true)
     }
 
     func testSilenceOnlyNeverEmitsSegment() async {
@@ -93,6 +96,7 @@ final class AudioPipelineTests: XCTestCase {
 
         let segment = await iter.next()
         XCTAssertNotNil(segment)
+        XCTAssertEqual(segment?.endedBySilence, false)
     }
 
     func testForceEndWithNoSpeechEmitsNothing() async {
@@ -140,6 +144,7 @@ final class AudioPipelineTests: XCTestCase {
         let expectedSamples = n * 512
         let expected = Duration.seconds(Double(expectedSamples) / Self.SR)
         XCTAssertEqual(segment.duration, expected)
+        XCTAssertEqual(segment.endedBySilence, false)
     }
 
     func testSilenceBeforeReflectsIdleSamplesBeforeSpeech() async {
@@ -154,6 +159,7 @@ final class AudioPipelineTests: XCTestCase {
         let segment = await iter.next()!
         let expected = Duration.seconds(Double(idleSamples) / Self.SR)
         XCTAssertEqual(segment.silenceBefore, expected)
+        XCTAssertEqual(segment.trailingSilenceAfter, .zero)
     }
 
     // MARK: - stop() emits in-progress speech
@@ -229,6 +235,7 @@ final class AudioPipelineTests: XCTestCase {
         let extraSamples    = extra * 512
         let expected = Duration.seconds(Double(trailingSamples + extraSamples) / Self.SR)
         XCTAssertEqual(second.silenceBefore, expected)
+        XCTAssertEqual(second.trailingSilenceAfter, .zero)
     }
 
     // MARK: - Audio content
@@ -245,5 +252,18 @@ final class AudioPipelineTests: XCTestCase {
         XCTAssertFalse(segment.audio.isEmpty)
         // All speech samples should be 0.1
         XCTAssertEqual(segment.audio.first!, 0.1, accuracy: 1e-6)
+    }
+
+    func testSpeechTerminatedBeforeTrailingSilenceThresholdDoesNotMarkEndedBySilence() async {
+        let pipeline = makePipeline()
+        var iter = pipeline.segments.makeAsyncIterator()
+
+        for _ in 0..<speechChunksToMeetMinimum() { await pipeline.processChunk(speechChunk()) }
+        await pipeline.processChunk(silenceChunk(3_200))
+        await pipeline.forceEnd()
+
+        let segment = await iter.next()!
+        XCTAssertEqual(segment.trailingSilenceAfter, .milliseconds(200))
+        XCTAssertEqual(segment.endedBySilence, false)
     }
 }

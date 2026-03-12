@@ -115,7 +115,7 @@ actor SessionController {
             pendingInputMode = nil
             isRecording = false
             cancelPartialTask()
-            log.log("segment received: duration=\(segment.duration), silenceBefore=\(segment.silenceBefore), mode=\(mode)", category: .session)
+            log.log("segment received: duration=\(segment.duration), silenceBefore=\(segment.silenceBefore), trailingSilenceAfter=\(segment.trailingSilenceAfter), endedBySilence=\(segment.endedBySilence), mode=\(mode)", category: .session)
             hudContinuation.yield(.transcribing)
             let result = await transcriber.transcribe(segment)
             log.log("transcription: chars=\(result.text.count) confidence=\(result.confidence)", category: .session)

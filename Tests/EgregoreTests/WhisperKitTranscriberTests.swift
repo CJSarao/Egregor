@@ -57,7 +57,7 @@ final class WhisperKitTranscriberTests: XCTestCase {
     // MARK: - transcribe() with injected engine
 
     func testTranscribeReturnsTextAndConfidenceFromEngine() async {
-        let segment = SpeechSegment(audio: [], silenceBefore: .zero, duration: .zero)
+        let segment = SpeechSegment(audio: [], silenceBefore: .zero, duration: .zero, trailingSilenceAfter: .zero, endedBySilence: false)
         let transcriber = WhisperKitTranscriber(engineProvider: {
             { _, _ in ("hello world", [-0.5]) }
         })
@@ -72,7 +72,7 @@ final class WhisperKitTranscriberTests: XCTestCase {
 
     func testTranscribeEngineFailureReturnsEmptyDiscard() async {
         struct TestError: Error {}
-        let segment = SpeechSegment(audio: [0.1, 0.2], silenceBefore: .zero, duration: .zero)
+        let segment = SpeechSegment(audio: [0.1, 0.2], silenceBefore: .zero, duration: .zero, trailingSilenceAfter: .zero, endedBySilence: false)
         let transcriber = WhisperKitTranscriber(engineProvider: {
             { _, _ in throw TestError() }
         })
@@ -85,7 +85,7 @@ final class WhisperKitTranscriberTests: XCTestCase {
 
     func testTranscribeEngineIsLoadedOnlyOnce() async {
         let counter = Counter()
-        let segment = SpeechSegment(audio: [], silenceBefore: .zero, duration: .zero)
+        let segment = SpeechSegment(audio: [], silenceBefore: .zero, duration: .zero, trailingSilenceAfter: .zero, endedBySilence: false)
         let transcriber = WhisperKitTranscriber(engineProvider: {
             await counter.increment()
             return { _, _ in ("text", [0.0]) }
@@ -100,7 +100,7 @@ final class WhisperKitTranscriberTests: XCTestCase {
 
     func testConcurrentRequestsShareSingleEngineLoad() async {
         let counter = Counter()
-        let segment = SpeechSegment(audio: [0.1], silenceBefore: .zero, duration: .zero)
+        let segment = SpeechSegment(audio: [0.1], silenceBefore: .zero, duration: .zero, trailingSilenceAfter: .zero, endedBySilence: false)
         let snapshot = SpeechCaptureSnapshot(audio: [0.1], duration: .milliseconds(300))
         let transcriber = WhisperKitTranscriber(engineProvider: {
             await counter.increment()
@@ -137,7 +137,7 @@ final class WhisperKitTranscriberTests: XCTestCase {
     }
 
     func testTranscribeTrimsWhitespace() async {
-        let segment = SpeechSegment(audio: [], silenceBefore: .zero, duration: .zero)
+        let segment = SpeechSegment(audio: [], silenceBefore: .zero, duration: .zero, trailingSilenceAfter: .zero, endedBySilence: false)
         let transcriber = WhisperKitTranscriber(engineProvider: {
             { _, _ in ("  trimmed  ", [0.0]) }
         })
@@ -166,7 +166,7 @@ final class WhisperKitTranscriberTests: XCTestCase {
         let audio: [Float] = [0.1, 0.2, 0.3]
         let silence = Duration.milliseconds(2000)
         let duration = Duration.milliseconds(500)
-        let segment = SpeechSegment(audio: audio, silenceBefore: silence, duration: duration)
+        let segment = SpeechSegment(audio: audio, silenceBefore: silence, duration: duration, trailingSilenceAfter: .milliseconds(800), endedBySilence: true)
         let transcriber = WhisperKitTranscriber(engineProvider: {
             { _, _ in ("ok", [0.0]) }
         })
@@ -175,6 +175,8 @@ final class WhisperKitTranscriberTests: XCTestCase {
 
         XCTAssertEqual(result.segment.silenceBefore, silence)
         XCTAssertEqual(result.segment.duration, duration)
+        XCTAssertEqual(result.segment.trailingSilenceAfter, .milliseconds(800))
+        XCTAssertEqual(result.segment.endedBySilence, true)
         XCTAssertEqual(result.segment.audio, audio)
     }
 

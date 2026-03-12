@@ -27,6 +27,8 @@ struct SpeechSegment {
     let audio: [Float]
     let silenceBefore: Duration
     let duration: Duration
+    let trailingSilenceAfter: Duration
+    let endedBySilence: Bool
 }
 
 struct SpeechCaptureSnapshot: Equatable {

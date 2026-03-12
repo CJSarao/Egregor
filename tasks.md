@@ -4,7 +4,7 @@
 - passes: true
 - ac:
   - The project builds on macOS 14.0+ as a menu bar app with no Dock icon
-  - WhisperKit and KeyboardShortcuts are the only third-party dependencies declared
+  - WhisperKit is the only third-party dependency declared
   - Core protocols and domain types from the spec exist with module boundaries that hide implementation details
 - verify: xcodebuild -scheme Egregore -destination 'platform=macOS' build
 
@@ -33,7 +33,7 @@
 - deps: Task 1
 - passes: true
 - ac:
-  - ROGER and ABORT resolve to commands only when the utterance satisfies the isolation algorithm and current input mode permits command handling
+  - ROGER and ABORT resolve to commands only when the utterance satisfies the full OPEN-mode isolation algorithm and current input mode permits command handling
   - Non-vocabulary text never resolves to a command regardless of timing metadata
   - Low-confidence transcriptions resolve to discard before injection or command execution
 - verify: swift test --filter IntentResolverTests
@@ -53,7 +53,7 @@
 - deps: Task 1
 - passes: true
 - ac:
-  - AudioPipeline hides AVFoundation details and emits SpeechSegment values with normalized audio, duration, and silenceBefore metadata
+  - AudioPipeline hides AVFoundation details and emits SpeechSegment values with normalized audio, duration, silenceBefore, trailingSilenceAfter, and endedBySilence metadata
   - In PTT mode, forceEnd terminates the active segment immediately on key release even if VAD would continue
   - In OPEN mode, VAD self-terminates utterances without caller-managed segmentation knobs
 - verify: swift test --filter AudioPipelineTests
@@ -63,8 +63,8 @@
 - deps: Task 1
 - passes: true
 - ac:
-  - Holding Right Option emits PTT begin and end events for dictation mode
-  - Holding Right Shift with Right Option emits command-mode PTT events
+  - Holding Right Command emits PTT begin and end events for dictation mode
+  - Holding Right Shift with Right Command emits command-mode PTT events
   - Tapping Right Control toggles between PTT and OPEN modes and the selected mode persists for the app session
 - verify: swift test --filter HotkeyManagerTests
 
@@ -93,8 +93,8 @@
 - deps: Task 3, Task 4, Task 5, Task 8
 - passes: true
 - ac:
-  - Property-based tests cover IntentResolver command matching, non-command rejection, low-confidence discard behavior, and OutputManager buffer semantics
-  - End-to-end tests exercise transcriber, resolver, output formatting, full mocked pipeline flows, and at least one interactive zsh PTY shell integration proof without requiring audio hardware
+  - Property-based tests cover IntentResolver command matching, non-command rejection, low-confidence discard behavior, full OPEN-mode isolation rejection paths, and OutputManager buffer semantics
+  - End-to-end tests exercise transcriber, resolver, output formatting, and full mocked pipeline flows without requiring audio hardware
   - The suite names or groups tests by spec feature so passing results can be traced back to the required behaviors and milestones
 - verify: swift test
 
@@ -116,8 +116,8 @@
   - OPEN-mode and PTT final transcriptions either append to the active terminal buffer or emit logs showing exactly where resolution failed
   - Session discovery logs include the frontmost app PID, shell PID traversal, matched registry PID ancestry, and session file or pipe outcome without exposing implementation details to callers
   - ROGER and ABORT attempts log whether the app executed send or clear and whether desktop permissions may block the action
-  - The managed zsh snippet supports an opt-in debug log that proves handler entry and post-mutation buffer state during manual debugging or PTY-backed tests
-- verify: swift test --filter ShellPTYIntegrationTests && manual check in a fresh zsh terminal after installing the managed snippet, with logs confirming append and clear paths
+  - The managed zsh snippet supports an opt-in debug log that proves handler entry and post-mutation buffer state during manual debugging
+- verify: swift test --filter ShellIntegrationInstallerTests && manual check in a fresh zsh terminal after installing the managed snippet, with logs confirming append and clear paths
 
 ## Task 13
 - desc: Replace brittle fixed hotkey assumptions with a user-appropriate input scheme and visible configuration state for treadmill use

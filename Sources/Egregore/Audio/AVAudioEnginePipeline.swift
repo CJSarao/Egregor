@@ -4,10 +4,10 @@ import Foundation
 actor AVAudioEnginePipeline: AudioPipeline {
 
     // VAD constants — sample-count-based for deterministic behaviour at 16 kHz.
-    // 512 samples ≈ 32 ms per chunk; 700 ms ≈ 22 chunks; 100 ms ≈ 3 chunks.
+    // 512 samples ≈ 32 ms per chunk; 800 ms ≈ 25 chunks; 100 ms ≈ 3 chunks.
     static let outputSampleRate: Double = 16_000
     static let silenceRMSThreshold: Float = 0.01
-    static let silenceSamplesThreshold = 11_200   // 700 ms at 16 kHz
+    static let silenceSamplesThreshold = 12_800   // 800 ms at 16 kHz
     static let minimumSpeechSamples    = 1_600    // 100 ms at 16 kHz
     static let partialSnapshotSamplesThreshold = 3_200 // 200 ms at 16 kHz
 
@@ -73,7 +73,7 @@ actor AVAudioEnginePipeline: AudioPipeline {
     func stop() {
         tapHandle?.stop()
         tapHandle = nil
-        emitCurrentSegment()        // emit in-progress speech before tearing down
+        emitCurrentSegment(endedBySilence: false)        // emit in-progress speech before tearing down
         chunkContinuation?.finish()
         chunkContinuation = nil
         processingTask = nil
@@ -83,7 +83,7 @@ actor AVAudioEnginePipeline: AudioPipeline {
 
     func forceEnd() {
         guard inSpeech else { return }
-        emitCurrentSegment()
+        emitCurrentSegment(endedBySilence: false)
         resetVADState()
     }
 
@@ -109,7 +109,7 @@ actor AVAudioEnginePipeline: AudioPipeline {
             trailingSilenceCount += n
             samplesSinceLastSnapshot += n
             if trailingSilenceCount >= Self.silenceSamplesThreshold {
-                emitCurrentSegment()
+                emitCurrentSegment(endedBySilence: true)
                 resetVADState()
             }
         } else {
@@ -121,14 +121,17 @@ actor AVAudioEnginePipeline: AudioPipeline {
 
     // MARK: - Private helpers
 
-    private func emitCurrentSegment() {
+    private func emitCurrentSegment(endedBySilence: Bool) {
         guard inSpeech, speechSampleCount >= Self.minimumSpeechSamples else { return }
         let duration     = Duration.seconds(Double(speechSampleCount)   / Self.outputSampleRate)
         let silenceBefore = Duration.seconds(Double(silenceBeforeSpeech) / Self.outputSampleRate)
+        let trailingSilenceAfter = Duration.seconds(Double(trailingSilenceCount) / Self.outputSampleRate)
         segmentContinuation.yield(SpeechSegment(
             audio: speechBuffer,
             silenceBefore: silenceBefore,
-            duration: duration
+            duration: duration,
+            trailingSilenceAfter: trailingSilenceAfter,
+            endedBySilence: endedBySilence
         ))
         samplesSinceLastEnd = trailingSilenceCount
     }
