@@ -61,7 +61,7 @@ struct ShellIntegrationInstaller {
         local before_buffer="$BUFFER"
         local before_cursor="$CURSOR"
         _egregore_debug "handler entry fd=$VOICE_FD before_len=${#before_buffer} before_buffer<<<$before_buffer>>> before_cursor=$before_cursor"
-        IFS= read -r line <&$VOICE_FD || {
+        IFS= read -r -t 1 line <&$VOICE_FD || {
             _egregore_debug "read failed fd=$VOICE_FD"
             return 0
         }
