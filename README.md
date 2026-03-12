@@ -1,236 +1,84 @@
 # Egregore
 
-> **Warning:** This project is a work in progress. Expect breaking changes and instability.
+macOS menu bar app that transcribes speech and injects it into the active zsh session. Built for hands-free terminal use.
 
-A macOS menu bar app that transcribes your voice and types it into the terminal. Built for hands-free shell interaction — say a command while walking on a treadmill and it appears in your zsh buffer.
+> Work in progress. Expect breaking changes.
 
-Not a voice assistant. Not dictation software. A focused tool: voice goes in, text lands in your terminal.
+## How it works
 
-## How It Works
-
-```
-hold Right Command → speak → release → text appears in terminal
-```
-
-Egregore captures audio, runs it through WhisperKit (on-device speech recognition via Apple's Neural Engine), decides what to do with the result, and writes it into your shell's line editor over a named pipe. Your terminal never loses focus.
+Hold Right Command, speak, release. Text appears in your terminal's zsh line buffer. No simulated keystrokes — Egregore writes directly into ZLE via a named pipe.
 
 Two modes:
 
-- **PTT (Push-to-Talk)** — hold a key, speak, release. Default.
-- **OPEN (Open Mic)** — VAD (voice activity detection) runs continuously. Speak freely, text flows into the terminal.
+- **PTT (Push-to-Talk)** — hold key, speak, release. Default.
+- **OPEN** — continuous VAD. Speak freely, text flows in.
 
-Two voice commands (military-style to avoid false positives):
+Two voice commands:
 
-| Say | What happens |
-|---|---|
-| `ROGER` | Presses Return — sends whatever's in the buffer |
-| `ABORT` | Clears the buffer |
+| Command | Action |
+|---------|--------|
+| `ROGER` | Submit the current shell buffer |
+| `ABORT` | Clear the buffer |
 
 ## Requirements
 
 - macOS 14.0+ (Sonoma)
 - Xcode 15+ / Swift 5.9+
-- A microphone (for actual use — tests run without one)
+- Microphone (tests run without one)
 
-## Build & Run
+## Build
 
 ```bash
 swift build
-swift test       # unit, property, and mocked integration tests; no hardware needed
+swift test
 ```
 
-The binary lands in `.build/debug/Egregore`. On startup, Egregore begins prewarming WhisperKit in the background; if the model is missing, WhisperKit downloads it (~1 GB) to `~/.local/share/egregore/models/`.
+On first launch, WhisperKit downloads the model (~1 GB) to `~/.local/share/egregore/models/`.
 
-## Project Structure
+## Architecture
+
+Five protocols define module boundaries (`Domain/Protocols.swift`). `SessionController` (an actor) coordinates all modules via `AsyncStream` channels. Dependencies are injected through init parameters — no frameworks.
 
 ```
-Package.swift                       # Swift Package Manager manifest
 Sources/Egregore/
-├── EgregoreApp.swift             # Entry point — menu bar app, no Dock icon
-├── SessionController.swift         # The coordinator — connects everything
+├── SessionController.swift           # Coordinator
 ├── Domain/
-│   ├── Protocols.swift             # 5 protocols defining module boundaries
-│   └── Types.swift                 # Value types shared across modules
+│   ├── Protocols.swift               # AudioPipeline, Transcriber, IntentResolver, OutputManager, HotkeyManager
+│   └── Types.swift                   # Shared value types
 ├── Audio/
-│   └── AVAudioEnginePipeline.swift # Mic capture + voice activity detection
+│   └── AVAudioEnginePipeline.swift   # Mic capture, VAD, segment/snapshot streams
 ├── Hotkeys/
-│   └── NSEventHotkeyManager.swift  # Global keyboard monitoring
+│   └── NSEventHotkeyManager.swift    # Global keyboard monitoring
 ├── Transcriber/
-│   └── WhisperKitTranscriber.swift # Speech-to-text via WhisperKit
+│   └── WhisperKitTranscriber.swift   # On-device STT via WhisperKit, streaming partials
 ├── Resolver/
-│   └── EgregoreIntentResolver.swift  # Decides: inject text, run command, or discard
+│   └── EgregoreIntentResolver.swift  # Classify: inject text, command, or discard
 ├── Output/
-│   └── ShellOutputManager.swift    # Writes to zsh's line buffer via named pipe
+│   └── ShellOutputManager.swift      # Named pipe writer, session discovery, shell targeting
 ├── HUD/
-│   └── HUDWindow.swift             # Floating overlay showing current state
-├── MenuBar/
-│   └── MenuBarView.swift           # Menu bar UI
+│   └── HUDWindow.swift               # Floating overlay (non-key, click-through)
 └── ShellIntegration/
-    └── ShellIntegrationInstaller.swift # Installs the zsh snippet into ~/.zshrc
-Tests/EgregoreTests/              # unit, property, and mocked integration tests
+    └── ShellIntegrationInstaller.swift  # Managed zsh snippet lifecycle
 ```
 
-## Architecture (for the Curious)
+### Shell integration
 
-This is a good codebase to study if you're learning Swift. It uses several patterns you'll encounter constantly in macOS/iOS work, and it's small enough to read end-to-end.
+A managed zsh snippet (installed into `~/.zshrc`) creates a named pipe per session and registers prompt-ready metadata under `~/.config/egregore/sessions/`. ZLE watches the pipe fd. Egregore resolves the frontmost terminal, ranks descendant shells by prompt/focus readiness, and writes `inject|`, `clear|`, or `send|` messages. Terminal-emulator agnostic — works with any app running zsh.
 
-### Protocols as Module Boundaries
+Shell-side debug logging available via `EGREGORE_SHELL_DEBUG=1`.
 
-Open `Sources/Egregore/Domain/Protocols.swift` — five protocols, each under 10 lines:
+### Testing
 
-```swift
-protocol AudioPipeline {
-    func start() async
-    func stop() async
-    func forceEnd() async
-    var segments: AsyncStream<SpeechSegment> { get }
-    var captureSnapshots: AsyncStream<SpeechCaptureSnapshot> { get }
-}
-
-protocol Transcriber {
-    func transcribePartial(_ snapshot: SpeechCaptureSnapshot) async -> String
-    func transcribe(_ segment: SpeechSegment) async -> TranscriptionResult
-}
-
-protocol IntentResolver {
-    func resolve(_ result: TranscriptionResult, mode: InputMode) -> Intent
-}
-
-protocol OutputManager {
-    func append(_ text: String)
-    func send()
-    func clear()
-}
-```
-
-Each protocol hides a large amount of complexity behind a tiny surface. `AudioPipeline` hides AVFoundation audio graphs, format conversion, buffer management, the VAD algorithm, and the in-progress snapshot stream used for live HUD text. Callers just see `start()`, `stop()`, and async streams for snapshots and final speech segments.
-
-**Why this matters:** In Swift, protocols are how you decouple modules and enable testing. `SessionController` depends on `any AudioPipeline`, not `AVAudioEnginePipeline` — so tests can inject a mock that emits fake segments without a microphone.
-
-### Swift Concurrency in Practice
-
-The project uses three concurrency primitives you should understand:
-
-**`actor`** — SessionController and AVAudioEnginePipeline are both actors. An actor guarantees that only one piece of code accesses its mutable state at a time. No locks, no data races:
-
-```swift
-actor SessionController {
-    private(set) var operatingMode: OperatingMode = .ptt
-    private var pendingInputMode: InputMode?
-    // Swift guarantees these are never read/written simultaneously
-}
-```
-
-**`AsyncStream`** — The communication channel between modules. Instead of delegates or callbacks, each module exposes an `AsyncStream` that downstream consumers iterate with `for await`:
-
-```swift
-private func runSegmentLoop() async {
-    for await segment in pipeline.segments {
-        let result = await transcriber.transcribe(segment)
-        let intent = resolver.resolve(result, mode: mode)
-        dispatch(intent)
-    }
-}
-```
-
-This is the modern Swift replacement for delegate chains. The stream producer and consumer are fully decoupled.
-
-**`nonisolated let`** — Streams are declared `nonisolated` on actors so callers can access them without `await`:
-
-```swift
-actor AVAudioEnginePipeline: AudioPipeline {
-    nonisolated let segments: AsyncStream<SpeechSegment>
-    // Safe because AsyncStream is Sendable and assigned once in init
-}
-```
-
-### Dependency Injection Without Frameworks
-
-No DI container, no property wrappers, no magic. Just init parameters:
-
-```swift
-actor SessionController {
-    init(
-        hotkeys: any HotkeyManager,
-        pipeline: any AudioPipeline,
-        transcriber: any Transcriber,
-        resolver: any IntentResolver,
-        output: any OutputManager
-    ) { ... }
-}
-```
-
-Tests create mock implementations and pass them in. The `any` keyword tells Swift to accept any type conforming to the protocol (existential type). This is the simplest DI pattern in Swift — learn it before reaching for frameworks.
-
-### The `@main` Entry Point
-
-The entire app setup is 9 lines:
-
-```swift
-@main
-struct EgregoreApp: App {
-    init() {
-        NSApp.setActivationPolicy(.accessory)  // no Dock icon
-    }
-
-    var body: some Scene {
-        MenuBarExtra("Egregore", systemImage: "waveform.badge.mic") {
-            MenuBarView()
-        }
-    }
-}
-```
-
-`@main` marks the entry point. `NSApp.setActivationPolicy(.accessory)` hides the app from the Dock — it lives entirely in the menu bar. `MenuBarExtra` is a SwiftUI scene type that creates a menu bar item.
-
-### How the Shell Integration Works
-
-This is the most interesting systems-level piece. Egregore doesn't simulate keystrokes to type text (fragile, slow). Instead, it writes directly into zsh's line editor (ZLE) via a named pipe:
-
-1. A zsh snippet (installed into `~/.zshrc`) creates a named pipe per shell session and keeps a last-active marker under `~/.config/egregore/activity/`
-2. ZLE watches the pipe's file descriptor for incoming data
-3. Egregore finds the frontmost terminal app, ranks descendant shell sessions by recent activity, looks up the best pipe path, and writes `inject|hello world\n`
-4. ZLE reads it and sets `BUFFER="hello world"` — text appears instantly
-
-This is terminal-emulator agnostic. Works in any app running zsh: Ghostty, Terminal.app, iTerm2, VS Code terminal, tmux panes.
-
-For debugging, the managed snippet also supports opt-in shell-side diagnostics with `EGREGORE_SHELL_DEBUG=1`, writing handler activity and post-mutation buffer state to `~/.local/share/egregore/logs/` or a custom `EGREGORE_SHELL_DEBUG_LOG` path.
-
-### Testing Without Hardware
-
-Every module is testable without a microphone or audio output. The key pattern is **closure injection**:
-
-```swift
-// Production: installs a real AVAudioEngine tap
-init(tapInstaller: @escaping TapInstaller = AVAudioEnginePipeline.makeLiveTapInstaller())
-
-// Test: injects a no-op tap, then calls processChunk() directly
-let pipeline = AVAudioEnginePipeline { callback in
-    TapHandle(start: {}, stop: {})
-}
-await pipeline.processChunk(someFakeAudioData)
-```
-
-WhisperKitTranscriber uses the same pattern — a `@Sendable () async throws -> Engine` closure that tests replace with a stub returning canned results. The current suite proves resolver, output, HUD, and coordinator behavior without hardware. PTY-backed shell integration proof is deferred to a later pass.
-
-## Key Files to Read First
-
-If you're studying this codebase, read in this order:
-
-1. **`Domain/Types.swift`** — all the value types. Small file, sets up the vocabulary.
-2. **`Domain/Protocols.swift`** — the five module contracts. Read these before any implementation.
-3. **`Resolver/EgregoreIntentResolver.swift`** — the simplest implementation. Pure logic, no frameworks, no async. Good example of how a protocol gets implemented.
-4. **`SessionController.swift`** — the coordinator. Shows how `actor`, `AsyncStream`, and `for await` work together.
-5. **`Audio/AVAudioEnginePipeline.swift`** — the most complex module. Shows how to wrap a framework API behind a clean protocol.
+All modules are testable without audio hardware. Closure injection replaces real audio taps and WhisperKit engines with stubs. 172 tests cover resolver logic, output semantics, HUD state transitions, streaming partials, and mocked end-to-end flows.
 
 ## Dependencies
 
-| Package | What it does | Why it's here |
-|---|---|---|
-| [WhisperKit](https://github.com/argmaxinc/WhisperKit) | On-device speech recognition using Core ML | The transcription engine |
+| Package | Purpose |
+|---------|---------|
+| [WhisperKit](https://github.com/argmaxinc/WhisperKit) | On-device speech recognition (Core ML) |
 
-WhisperKit is the only third-party dependency. The project has a strict policy against adding dependencies — everything else is built with Apple's frameworks.
+Only third-party dependency.
 
 ## License
 
-Personal tool. Not currently licensed for distribution.
+Personal tool. Not licensed for distribution.
