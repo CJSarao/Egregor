@@ -75,7 +75,7 @@ For any significant abstraction, consider at least two approaches before committ
 | Hotkeys | `AppKit` / `NSEvent` | Global modifier-key monitoring |
 | Shell integration | ZLE fd watcher (zsh) | Terminal-agnostic, shell-level |
 | Session registry | `~/.config/egregore/sessions/` | Per-session pipe registration |
-| Session activity | `~/.config/egregore/activity/` | Per-session last-active markers for focused-shell selection |
+| Session activity | `~/.config/egregore/activity/` | Legacy compatibility timestamps used when richer shell metadata is unavailable |
 
 ### Dependencies Policy
 Only WhisperKit is currently declared as a third-party dependency. Any additional dependency requires explicit justification against implementing the functionality directly.
@@ -90,6 +90,7 @@ Two operational modes, toggled by a persistent hotkey.
 - Hold PTT key → mic records and HUD shows a live transcript for the current utterance
 - Release PTT key → finalize the utterance, hide the live transcript state, and inject the finalized text into the active terminal buffer
 - Hold Command mode modifier + PTT key → record single utterance with the same live HUD transcript, then on release parse as command only (no append)
+- Once command mode is entered during a PTT hold, it remains latched for that utterance even if the modifier is released before the PTT key
 
 ### OPEN (Open Mic)
 - VAD runs continuously while OPEN mode is active
@@ -119,7 +120,7 @@ Minimal, opinionated. Military-style to prevent false positives in normal speech
 
 | Command | Word | Action |
 |---|---|---|
-| Send | `ROGER` | Send Return keystroke to focused terminal. Does NOT re-inject text — text already present from prior injection. |
+| Send | `ROGER` | Submit the focused shell's current ZLE buffer through the shell pipe. Does NOT re-inject text — text already present from prior injection. |
 | Clear | `ABORT` | Clear ZLE BUFFER in focused terminal + clear HUD. |
 
 Vocabulary is fixed. No user configuration.
@@ -234,7 +235,7 @@ enum Intent {
 }
 
 enum Command {
-    case roger  // send Return only — text already in terminal
+    case roger  // submit current buffer only — text already in terminal
     case abort  // clear terminal buffer + clear HUD
 }
 ```
@@ -248,18 +249,18 @@ Hides: isolation timing algorithm, all threshold constants, vocabulary matching,
 ```swift
 protocol OutputManager {
     func append(_ text: String)  // ZLE BUFFER += text, cursor at end
-    func send()                  // CGEvent Return keystroke
+    func send()                  // accept current ZLE buffer via shell pipe
     func clear()                 // ZLE BUFFER = ""
 }
 ```
 
-Hides: session registry lookup, recent-session activity ranking, process tree walking, pipe path resolution, ZLE wire protocol, shell pipe I/O. Three operations, no implementation details exposed.
+Hides: session registry lookup, focus/prompt-aware shell ranking, process tree walking, pipe path resolution, ZLE wire protocol, shell pipe I/O. Three operations, no implementation details exposed.
 
 `SessionController` always sequences these operations. They are never chained inside `OutputManager`.
 
 Each `append` call concatenates to the existing ZLE buffer (space-separated). `clear` resets to empty. This is the only mutation model — there is no replace operation.
 
-When session discovery or pipe delivery fails, `OutputManager` must emit explicit diagnostics identifying the frontmost app, candidate shell PID ancestry, resolved pipe path, recent-activity ranking when multiple shells are present, and whether the failure was lookup, stale registry, open, or write.
+When session discovery or pipe delivery fails, `OutputManager` must emit explicit diagnostics identifying the frontmost app, candidate shell PID ancestry, resolved pipe path, focus/prompt ranking when multiple shells are present, and whether the failure was lookup, stale registry, open, write, or ambiguity refusal.
 
 ---
 
@@ -306,6 +307,7 @@ Pure observer of `SessionController` state. No interface — subscribes to publi
 .transcribing → show activity indicator
 .injected     → fade out (text now in terminal)
 .cleared      → dismiss immediately
+.error        → show a short visible failure message, then dismiss
 .idle         → hidden
 ```
 
@@ -344,11 +346,26 @@ _egregore_mark_active() {
     print -r -- "${EPOCHREALTIME:-0}" > "$VOICE_ACTIVITY/$$"
 }
 
+_egregore_write_session_state() {
+    # Writes pipe path plus prompt/focus metadata for shell ranking.
+}
+
+_egregore_mark_prompt_ready() {
+    _egregore_mark_active
+    # Updates prompt/focus timestamps and marks the shell as eligible for send/clear.
+    _egregore_write_session_state
+}
+
+_egregore_mark_busy() {
+    _egregore_mark_active
+    # Marks the shell as not currently at a prompt.
+    _egregore_write_session_state
+}
+
 mkfifo "$VOICE_PIPE" 2>/dev/null
 exec {VOICE_FD}<>"$VOICE_PIPE"
 mkdir -p "$VOICE_REGISTRY"
-echo "$VOICE_PIPE" > "$VOICE_REGISTRY/$$"
-_egregore_mark_active
+_egregore_mark_prompt_ready
 trap "exec {VOICE_FD}<&-; rm -f '$VOICE_REGISTRY/$$' '$VOICE_ACTIVITY/$$' '$VOICE_PIPE'" EXIT
 typeset -g EGREGORE_PENDING_ACTION=""
 typeset -g EGREGORE_PENDING_TEXT=""
@@ -359,16 +376,21 @@ _egregore_apply_pending() {
         inject)
             BUFFER="${BUFFER:+$BUFFER }$EGREGORE_PENDING_TEXT"
             CURSOR=${#BUFFER}
-            _egregore_mark_active
+            _egregore_mark_prompt_ready
             zle -R
             _egregore_debug "inject applied after_len=${#BUFFER} after_buffer<<<$BUFFER>>> after_cursor=$CURSOR"
             ;;
         clear)
             BUFFER=""
             CURSOR=0
-            _egregore_mark_active
+            _egregore_mark_prompt_ready
             zle -R
             _egregore_debug "clear applied after_len=${#BUFFER} after_buffer<<<$BUFFER>>> after_cursor=$CURSOR"
+            ;;
+        send)
+            _egregore_mark_prompt_ready
+            zle -R
+            zle accept-line
             ;;
         *)
             _egregore_debug "unknown pending action=${EGREGORE_PENDING_ACTION:-<empty>}"
@@ -399,8 +421,9 @@ zle -N _egregore_apply_pending
 zle -N _egregore_inject
 zle -F $VOICE_FD _egregore_inject
 autoload -Uz add-zsh-hook add-zle-hook-widget
-add-zsh-hook precmd _egregore_mark_active
-add-zle-hook-widget line-init _egregore_mark_active
+add-zsh-hook precmd _egregore_mark_prompt_ready
+add-zsh-hook preexec _egregore_mark_busy
+add-zle-hook-widget line-init _egregore_mark_prompt_ready
 # End Egregore integration
 ```
 
@@ -408,8 +431,9 @@ add-zle-hook-widget line-init _egregore_mark_active
 
 1. `NSWorkspace.shared.frontmostApplication` → focused app PID
 2. Walk process tree to find shell child with a registered session file
-3. Read pipe path from `~/.config/egregore/sessions/{pid}`
-4. Write `inject|{text}\n` or `clear|\n` to pipe
+3. Read pipe path plus prompt/focus metadata from `~/.config/egregore/sessions/{pid}`
+4. Rank candidates by prompt/focus readiness before timestamp fallback
+5. Write `inject|{text}\n`, `clear|\n`, or `send|\n` to pipe
 
 ### Install Flow
 

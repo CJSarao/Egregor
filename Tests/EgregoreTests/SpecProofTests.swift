@@ -21,21 +21,18 @@ final class IntentResolverPropertyTests: XCTestCase {
     }
 
     private func randomNonIsolatedTiming() -> (silence: Duration, duration: Duration, trailingSilence: Duration, endedBySilence: Bool) {
-        switch Int.random(in: 0...2) {
+        switch Int.random(in: 0...1) {
         case 0:
-            return (.milliseconds(Int.random(in: 0...1500)),
-                    .milliseconds(Int.random(in: 50...1999)),
-                    .milliseconds(Int.random(in: 800...1600)),
-                    true)
-        case 1:
-            return (.milliseconds(Int.random(in: 1501...5000)),
-                    .milliseconds(Int.random(in: 2000...5000)),
-                    .milliseconds(Int.random(in: 800...1600)),
-                    true)
+            // Not ended by silence — always injects regardless of other timing
+            return (.milliseconds(Int.random(in: 0...5000)),
+                    .milliseconds(Int.random(in: 50...5000)),
+                    .milliseconds(Int.random(in: 0...1600)),
+                    false)
         default:
-            return (.milliseconds(Int.random(in: 1501...5000)),
-                    .milliseconds(Int.random(in: 50...1999)),
-                    .milliseconds(Int.random(in: 0...799)),
+            // Duration at or above threshold — too long to be a standalone command
+            return (.milliseconds(Int.random(in: 0...5000)),
+                    .milliseconds(Int.random(in: 2000...5000)),
+                    .milliseconds(Int.random(in: 0...1600)),
                     Bool.random())
         }
     }
@@ -348,15 +345,15 @@ final class SpecEndToEndTests: XCTestCase {
         XCTAssertEqual(readPipe(fd: fd), "clear|\n")
     }
 
-    func testAppendThenSendSequenceWritesInjectOnly() {
+    func testAppendThenSendSequenceWritesBothPipeMessages() {
         let (path, fd) = makePipeForE2E()
         defer { Darwin.close(fd); Darwin.unlink(path) }
 
         let output = ShellOutputManager(sessionResolver: { path })
         output.append("ls -la")
-        // send() posts CGEvent (Return keystroke), does NOT write to pipe
-        // Verify inject message is correct
-        XCTAssertEqual(readPipe(fd: fd), "inject|ls -la\n")
+        output.send()
+
+        XCTAssertEqual(readPipe(fd: fd), "inject|ls -la\nsend|\n")
     }
 
     // MARK: E2E — Full mocked pipeline: segment → transcribe → resolve → output
@@ -646,8 +643,14 @@ final class SequentialMockTranscriber: Transcriber, @unchecked Sendable {
     private var results: [TranscriptionResult]
     private var index = 0
 
+    nonisolated let partialTextStream: AsyncStream<String>
+    private let partialContinuation: AsyncStream<String>.Continuation
+
     init(results: [TranscriptionResult]) {
         self.results = results
+        var cont: AsyncStream<String>.Continuation!
+        partialTextStream = AsyncStream { cont = $0 }
+        partialContinuation = cont!
     }
 
     func transcribePartial(_ snapshot: SpeechCaptureSnapshot) async -> String { "" }

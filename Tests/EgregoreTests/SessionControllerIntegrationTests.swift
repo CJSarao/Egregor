@@ -57,10 +57,17 @@ final class MockTranscriber: Transcriber, @unchecked Sendable {
     var result: TranscriptionResult
     var partialText = ""
 
+    nonisolated let partialTextStream: AsyncStream<String>
+    private let partialContinuation: AsyncStream<String>.Continuation
+
     init(_ result: TranscriptionResult) {
         self.result = result
+        var cont: AsyncStream<String>.Continuation!
+        partialTextStream = AsyncStream { cont = $0 }
+        partialContinuation = cont!
     }
 
+    func emitPartial(_ text: String) { partialContinuation.yield(text) }
     func transcribePartial(_ snapshot: SpeechCaptureSnapshot) async -> String { partialText }
     func transcribe(_ segment: SpeechSegment) async -> TranscriptionResult { result }
 }
@@ -69,14 +76,31 @@ final class MockOutputManager: OutputManager, @unchecked Sendable {
     private(set) var appended: [String] = []
     private(set) var sendCount  = 0
     private(set) var clearCount = 0
+    var appendResult: OutputResult = .success
+    var sendResult: OutputResult = .success
+    var clearResult: OutputResult = .success
 
     var onAppend: ((String) -> Void)?
     var onSend:   (() -> Void)?
     var onClear:  (() -> Void)?
 
-    func append(_ text: String) { appended.append(text); onAppend?(text) }
-    func send()                 { sendCount  += 1;       onSend?()       }
-    func clear()                { clearCount += 1;       onClear?()      }
+    func append(_ text: String) -> OutputResult {
+        appended.append(text)
+        onAppend?(text)
+        return appendResult
+    }
+
+    func send() -> OutputResult {
+        sendCount += 1
+        onSend?()
+        return sendResult
+    }
+
+    func clear() -> OutputResult {
+        clearCount += 1
+        onClear?()
+        return clearResult
+    }
 }
 
 // MARK: - Helpers
@@ -245,6 +269,32 @@ final class SessionControllerIntegrationTests: XCTestCase {
         XCTAssertEqual(output.sendCount, 0)
     }
 
+    func testPTTCommandModeStaysLatchedWhenModifierReleasesEarly() async throws {
+        let output = MockOutputManager()
+        let exp = expectation(description: "send called")
+        output.onSend = { exp.fulfill() }
+
+        let hotkeys = MockHotkeyManager()
+        let pipeline = MockAudioPipeline(nextSegment: makeSpeechSegment())
+        let txr = MockTranscriber(makeTranscriptionResult(text: "ROGER"))
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
+        await ctrl.start()
+
+        hotkeys.emit(.pttBegan)
+        hotkeys.emit(.pttEnded(mode: .command))
+
+        await fulfillment(of: [exp], timeout: 2)
+        XCTAssertEqual(output.sendCount, 1)
+        XCTAssertEqual(output.appended, [])
+        XCTAssertEqual(output.clearCount, 0)
+    }
+
     // MARK: PTT command mode: non-vocabulary → discard, never inject
 
     func testPTTCommandModeNonVocabularyNeverInjects() async throws {
@@ -400,6 +450,127 @@ final class SessionControllerIntegrationTests: XCTestCase {
         await fulfillment(of: [exp], timeout: 2)
         XCTAssertEqual(output.clearCount, 1)
         XCTAssertEqual(output.appended, [])
+    }
+
+    // MARK: OPEN mode: relaxed timing ROGER → send
+
+    func testOpenModeRelaxedTimingRogerCallsSend() async throws {
+        let output = MockOutputManager()
+        let exp    = expectation(description: "send called with relaxed timing")
+        output.onSend = { exp.fulfill() }
+
+        let hotkeys  = MockHotkeyManager()
+        let pipeline = MockAudioPipeline()
+        let txr = MockTranscriber(makeTranscriptionResult(text: "ROGER",
+                                                          silenceBefore: .milliseconds(200),
+                                                          duration: .milliseconds(600),
+                                                          trailingSilenceAfter: .milliseconds(100),
+                                                          endedBySilence: true))
+        let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
+                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        await ctrl.start()
+
+        hotkeys.emit(.modeToggled)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        await pipeline.emitSegment(makeSpeechSegment(silenceBefore: .milliseconds(200),
+                                                     duration: .milliseconds(600),
+                                                     trailingSilenceAfter: .milliseconds(100),
+                                                     endedBySilence: true))
+
+        await fulfillment(of: [exp], timeout: 2)
+        XCTAssertEqual(output.sendCount, 1)
+        XCTAssertEqual(output.appended, [])
+    }
+
+    // MARK: OPEN mode: minimal timing ROGER → send (Task 16 regression proof)
+
+    func testOpenModeMinimalTimingRogerCallsSend() async throws {
+        let output = MockOutputManager()
+        let exp    = expectation(description: "send called with minimal timing")
+        output.onSend = { exp.fulfill() }
+
+        let hotkeys  = MockHotkeyManager()
+        let pipeline = MockAudioPipeline()
+        let txr = MockTranscriber(makeTranscriptionResult(text: "ROGER",
+                                                          silenceBefore: .milliseconds(100),
+                                                          duration: .milliseconds(600),
+                                                          trailingSilenceAfter: .milliseconds(50),
+                                                          endedBySilence: true))
+        let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
+                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        await ctrl.start()
+
+        hotkeys.emit(.modeToggled)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        await pipeline.emitSegment(makeSpeechSegment(silenceBefore: .milliseconds(100),
+                                                     duration: .milliseconds(600),
+                                                     trailingSilenceAfter: .milliseconds(50),
+                                                     endedBySilence: true))
+
+        await fulfillment(of: [exp], timeout: 2)
+        XCTAssertEqual(output.sendCount, 1)
+        XCTAssertEqual(output.appended, [])
+    }
+
+    // MARK: OPEN mode: minimal timing ABORT → clear (Task 16 regression proof)
+
+    func testOpenModeMinimalTimingAbortCallsClear() async throws {
+        let output = MockOutputManager()
+        let exp    = expectation(description: "clear called with minimal timing")
+        output.onClear = { exp.fulfill() }
+
+        let hotkeys  = MockHotkeyManager()
+        let pipeline = MockAudioPipeline()
+        let txr = MockTranscriber(makeTranscriptionResult(text: "ABORT",
+                                                          silenceBefore: .milliseconds(100),
+                                                          duration: .milliseconds(500),
+                                                          trailingSilenceAfter: .milliseconds(50),
+                                                          endedBySilence: true))
+        let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
+                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        await ctrl.start()
+
+        hotkeys.emit(.modeToggled)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        await pipeline.emitSegment(makeSpeechSegment(silenceBefore: .milliseconds(100),
+                                                     duration: .milliseconds(500),
+                                                     trailingSilenceAfter: .milliseconds(50),
+                                                     endedBySilence: true))
+
+        await fulfillment(of: [exp], timeout: 2)
+        XCTAssertEqual(output.clearCount, 1)
+        XCTAssertEqual(output.appended, [])
+    }
+
+    // MARK: OPEN mode: ROGER in a phrase injects as text, not command
+
+    func testOpenModeRogerInPhraseInjectsAsText() async throws {
+        let output = MockOutputManager()
+        let exp    = expectation(description: "append called for ROGER phrase")
+        output.onAppend = { _ in exp.fulfill() }
+
+        let hotkeys  = MockHotkeyManager()
+        let pipeline = MockAudioPipeline()
+        let txr = MockTranscriber(makeTranscriptionResult(text: "ROGER that",
+                                                          silenceBefore: .milliseconds(200),
+                                                          duration: .milliseconds(2500),
+                                                          trailingSilenceAfter: .milliseconds(900),
+                                                          endedBySilence: true))
+        let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
+                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        await ctrl.start()
+
+        hotkeys.emit(.modeToggled)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        await pipeline.emitSegment(makeSpeechSegment(silenceBefore: .milliseconds(200),
+                                                     duration: .milliseconds(2500),
+                                                     trailingSilenceAfter: .milliseconds(900),
+                                                     endedBySilence: true))
+
+        await fulfillment(of: [exp], timeout: 2)
+        XCTAssertEqual(output.appended, ["ROGER that"])
+        XCTAssertEqual(output.sendCount, 0)
+        XCTAssertEqual(output.clearCount, 0)
     }
 
     // MARK: PTT ignores segment events in OPEN mode

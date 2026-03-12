@@ -24,11 +24,46 @@ struct ShellIntegrationInstaller {
         print -r -- "${EPOCHREALTIME:-0}" > "$VOICE_ACTIVITY/$$"
     }
 
+    _egregore_json_escape() {
+        local value="$1"
+        value="${value//\\/\\\\}"
+        value="${value//\"/\\\"}"
+        value="${value//$'\n'/\\n}"
+        print -r -- "$value"
+    }
+
+    _egregore_write_session_state() {
+        mkdir -p "$VOICE_REGISTRY"
+        local tty_value
+        tty_value="$(tty 2>/dev/null || print -r -- "")"
+        tty_value="${tty_value//$'\n'/}"
+        print -r -- "{\"pipePath\":\"$(_egregore_json_escape "$VOICE_PIPE")\",\"lastPromptAt\":${EGREGORE_LAST_PROMPT_AT:-0},\"lastFocusAt\":${EGREGORE_LAST_FOCUS_AT:-0},\"isFocused\":${EGREGORE_IS_FOCUSED:-false},\"isAtPrompt\":${EGREGORE_IS_AT_PROMPT:-false},\"tty\":\"$(_egregore_json_escape "$tty_value")\"}" > "$VOICE_REGISTRY/$$"
+    }
+
+    _egregore_mark_prompt_ready() {
+        _egregore_mark_active
+        EGREGORE_LAST_PROMPT_AT="${EPOCHREALTIME:-0}"
+        EGREGORE_LAST_FOCUS_AT="${EPOCHREALTIME:-0}"
+        EGREGORE_IS_FOCUSED=true
+        EGREGORE_IS_AT_PROMPT=true
+        _egregore_write_session_state
+    }
+
+    _egregore_mark_busy() {
+        _egregore_mark_active
+        EGREGORE_IS_FOCUSED=false
+        EGREGORE_IS_AT_PROMPT=false
+        _egregore_write_session_state
+    }
+
     mkfifo "$VOICE_PIPE" 2>/dev/null
     exec {VOICE_FD}<>"$VOICE_PIPE"
     mkdir -p "$VOICE_REGISTRY"
-    echo "$VOICE_PIPE" > "$VOICE_REGISTRY/$$"
-    _egregore_mark_active
+    typeset -g EGREGORE_LAST_PROMPT_AT="${EPOCHREALTIME:-0}"
+    typeset -g EGREGORE_LAST_FOCUS_AT="${EPOCHREALTIME:-0}"
+    typeset -g EGREGORE_IS_FOCUSED=true
+    typeset -g EGREGORE_IS_AT_PROMPT=true
+    _egregore_mark_prompt_ready
     trap "exec {VOICE_FD}<&-; rm -f '$VOICE_REGISTRY/$$' '$VOICE_ACTIVITY/$$' '$VOICE_PIPE'" EXIT
     typeset -g EGREGORE_PENDING_ACTION=""
     typeset -g EGREGORE_PENDING_TEXT=""
@@ -39,16 +74,22 @@ struct ShellIntegrationInstaller {
             inject)
                 BUFFER="${BUFFER:+$BUFFER }$EGREGORE_PENDING_TEXT"
                 CURSOR=${#BUFFER}
-                _egregore_mark_active
+                _egregore_mark_prompt_ready
                 zle -R
                 _egregore_debug "inject applied after_len=${#BUFFER} after_buffer<<<$BUFFER>>> after_cursor=$CURSOR"
                 ;;
             clear)
                 BUFFER=""
                 CURSOR=0
-                _egregore_mark_active
+                _egregore_mark_prompt_ready
                 zle -R
                 _egregore_debug "clear applied after_len=${#BUFFER} after_buffer<<<$BUFFER>>> after_cursor=$CURSOR"
+                ;;
+            send)
+                _egregore_mark_prompt_ready
+                zle -R
+                _egregore_debug "send applied buffer_len=${#BUFFER} buffer<<<$BUFFER>>> cursor=$CURSOR"
+                zle accept-line
                 ;;
             *)
                 _egregore_debug "unknown pending action=${EGREGORE_PENDING_ACTION:-<empty>}"
@@ -79,8 +120,9 @@ struct ShellIntegrationInstaller {
     zle -N _egregore_inject
     zle -F $VOICE_FD _egregore_inject
     autoload -Uz add-zsh-hook add-zle-hook-widget
-    add-zsh-hook precmd _egregore_mark_active
-    add-zle-hook-widget line-init _egregore_mark_active
+    add-zsh-hook precmd _egregore_mark_prompt_ready
+    add-zsh-hook preexec _egregore_mark_busy
+    add-zle-hook-widget line-init _egregore_mark_prompt_ready
     # END Egregore integration
     """#
 

@@ -10,6 +10,7 @@ actor NSEventHotkeyManager: HotkeyManager {
 
     private var pttKeyDown = false
     private var commandModifierDown = false
+    private var pttCommandLatched = false
     private var modeToggleDown = false
 
     private var diagnosticsEnabled = false
@@ -42,16 +43,21 @@ actor NSEventHotkeyManager: HotkeyManager {
             let isDown = flags.contains(bindings.pttKey.flag)
             if isDown && !pttKeyDown {
                 pttKeyDown = true
+                pttCommandLatched = commandModifierDown
                 RuntimeLogger.shared.log("\(bindings.pttKey.displayName) down → pttBegan", category: .hotkey)
                 outputContinuation.yield(.pttBegan)
             } else if !isDown && pttKeyDown {
                 pttKeyDown = false
-                let inputMode: InputMode = commandModifierDown ? .command : .dictation
+                let inputMode: InputMode = pttCommandLatched ? .command : .dictation
+                pttCommandLatched = false
                 RuntimeLogger.shared.log("\(bindings.pttKey.displayName) up → pttEnded(\(inputMode))", category: .hotkey)
                 outputContinuation.yield(.pttEnded(mode: inputMode))
             }
         } else if keyCode == bindings.commandModifier.keyCode {
             commandModifierDown = flags.contains(bindings.commandModifier.flag)
+            if commandModifierDown && pttKeyDown {
+                pttCommandLatched = true
+            }
         } else if keyCode == bindings.modeToggle.keyCode {
             let isDown = flags.contains(bindings.modeToggle.flag)
             if isDown && !modeToggleDown {

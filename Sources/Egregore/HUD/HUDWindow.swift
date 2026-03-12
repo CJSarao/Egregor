@@ -111,6 +111,14 @@ final class HUDViewModel: ObservableObject {
                 self?.visible = false
                 self?.state = .idle
             }
+        case .error:
+            visible = true
+            fadeTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 1_800_000_000)
+                guard !Task.isCancelled else { return }
+                self?.visible = false
+                self?.state = .idle
+            }
         case .cleared:
             visible = false
             state = .idle
@@ -161,6 +169,9 @@ struct HUDContentView: View {
         case .injected:
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
+        case .error:
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.yellow)
         default:
             EmptyView()
         }
@@ -189,6 +200,11 @@ struct HUDContentView: View {
                 .font(.system(.body, design: .monospaced))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
+        case .error(let text):
+            Text(text)
+                .font(.system(.body, design: .monospaced))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
         default:
             EmptyView()
         }

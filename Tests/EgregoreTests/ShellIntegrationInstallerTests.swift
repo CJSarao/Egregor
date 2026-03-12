@@ -31,14 +31,19 @@ final class ShellIntegrationInstallerTests: XCTestCase {
         XCTAssertTrue(s.contains("VOICE_ACTIVITY"))
         XCTAssertTrue(s.contains("VOICE_DEBUG"))
         XCTAssertTrue(s.contains("VOICE_DEBUG_LOG"))
+        XCTAssertTrue(s.contains("_egregore_write_session_state"))
+        XCTAssertTrue(s.contains("_egregore_mark_prompt_ready"))
+        XCTAssertTrue(s.contains("_egregore_mark_busy"))
         XCTAssertTrue(s.contains("_egregore_debug"))
         XCTAssertTrue(s.contains("_egregore_mark_active"))
         XCTAssertTrue(s.contains("_egregore_inject"))
         XCTAssertTrue(s.contains("inject)"))
         XCTAssertTrue(s.contains("clear)"))
+        XCTAssertTrue(s.contains("send)"))
         XCTAssertTrue(s.contains("zle -F"))
         XCTAssertTrue(s.contains("add-zsh-hook"))
         XCTAssertTrue(s.contains("add-zle-hook-widget"))
+        XCTAssertTrue(s.contains("add-zsh-hook preexec _egregore_mark_busy"))
     }
 
     func testIsInstalledReturnsFalseWhenNoZshrc() {

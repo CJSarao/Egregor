@@ -14,6 +14,9 @@ actor WhisperKitTranscriber: Transcriber {
     private let progressHandler: ((Double) -> Void)?
     private let log: RuntimeLogger
 
+    nonisolated let partialTextStream: AsyncStream<String>
+    private let partialContinuation: AsyncStream<String>.Continuation
+
     init(progressHandler: ((Double) -> Void)? = nil, logger: RuntimeLogger = .shared) {
         self.progressHandler = progressHandler
         self.log = logger
@@ -21,6 +24,9 @@ actor WhisperKitTranscriber: Transcriber {
         self.engineProvider = { () async throws -> Engine in
             try await WhisperKitTranscriber.makeEngine(progressHandler: ph)
         }
+        var cont: AsyncStream<String>.Continuation!
+        partialTextStream = AsyncStream { cont = $0 }
+        partialContinuation = cont!
     }
 
     init(
@@ -31,13 +37,17 @@ actor WhisperKitTranscriber: Transcriber {
         self.engineProvider = engineProvider
         self.progressHandler = progressHandler
         self.log = logger
+        var cont: AsyncStream<String>.Continuation!
+        partialTextStream = AsyncStream { cont = $0 }
+        partialContinuation = cont!
     }
 
     func transcribePartial(_ snapshot: SpeechCaptureSnapshot) async -> String {
         guard !snapshot.audio.isEmpty else { return "" }
         do {
             let run = try await loadedEngine()
-            let (text, _) = try await run(snapshot.audio) { _ in }
+            let cont = partialContinuation
+            let (text, _) = try await run(snapshot.audio) { partial in cont.yield(partial) }
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
                 log.log("partial transcription: duration=\(snapshot.duration) chars=\(trimmed.count)", category: .transcriber)
@@ -54,7 +64,8 @@ actor WhisperKitTranscriber: Transcriber {
     func transcribe(_ segment: SpeechSegment) async -> TranscriptionResult {
         do {
             let run = try await loadedEngine()
-            let (text, avgLogprobs) = try await run(segment.audio) { _ in }
+            let cont = partialContinuation
+            let (text, avgLogprobs) = try await run(segment.audio) { partial in cont.yield(partial) }
             let confidence = Self.confidence(from: avgLogprobs)
             log.log("transcribed \(segment.audio.count) samples → \(text.count) chars (confidence \(confidence))", category: .transcriber)
             return TranscriptionResult(text: text.trimmingCharacters(in: .whitespacesAndNewlines),

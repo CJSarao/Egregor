@@ -94,7 +94,7 @@ final class HotkeyManagerTests: XCTestCase {
         XCTAssertEqual(event, .pttEnded(mode: .command))
     }
 
-    func testCommandModeRequiresRightShiftAtReleaseTime() async {
+    func testCommandModeStaysLatchedIfShiftReleasedBeforePTTKey() async {
         let sut = makeSUT()
         var iter = sut.events.makeAsyncIterator()
 
@@ -106,7 +106,22 @@ final class HotkeyManagerTests: XCTestCase {
         await releaseRightCommand(sut, withShift: false)
 
         let event = await iter.next()
-        XCTAssertEqual(event, .pttEnded(mode: .dictation))
+        XCTAssertEqual(event, .pttEnded(mode: .command))
+    }
+
+    func testCommandModeLatchesWhenShiftPressedDuringPTTHold() async {
+        let sut = makeSUT()
+        var iter = sut.events.makeAsyncIterator()
+
+        await pressRightCommand(sut)
+        _ = await iter.next()
+
+        await pressRightShift(sut)
+        await releaseRightShift(sut)
+        await releaseRightCommand(sut, withShift: false)
+
+        let event = await iter.next()
+        XCTAssertEqual(event, .pttEnded(mode: .command))
     }
 
     // MARK: - Right Shift alone emits no events

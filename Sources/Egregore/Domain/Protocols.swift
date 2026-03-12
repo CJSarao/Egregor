@@ -13,6 +13,7 @@ protocol HotkeyManager {
 }
 
 protocol Transcriber {
+    var partialTextStream: AsyncStream<String> { get }
     func transcribePartial(_ snapshot: SpeechCaptureSnapshot) async -> String
     func transcribe(_ segment: SpeechSegment) async -> TranscriptionResult
 }
@@ -22,7 +23,7 @@ protocol IntentResolver {
 }
 
 protocol OutputManager {
-    func append(_ text: String)
-    func send()
-    func clear()
+    func append(_ text: String) -> OutputResult
+    func send() -> OutputResult
+    func clear() -> OutputResult
 }

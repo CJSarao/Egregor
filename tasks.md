@@ -15,6 +15,7 @@
 - ac:
   - First-launch flow can present the exact managed zsh integration block before writing to ~/.zshrc
   - Install appends or refreshes the marked block idempotently and creates the session registry/activity directory layout under ~/.config/egregore/
+  - The managed snippet records prompt-ready shell metadata and supports `inject`, `clear`, and `send` actions over the same pipe protocol
   - Uninstall removes the managed block from ~/.zshrc and deletes Egregore shell integration state
 - verify: swift test --filter ShellIntegrationInstallerTests
 
@@ -23,9 +24,9 @@
 - deps: Task 1, Task 2
 - passes: true
 - ac:
-  - OutputManager resolves the frontmost application, ranks registered shell sessions by recent activity, and writes to the best candidate pipe without exposing process-tree or pipe details to callers
+  - OutputManager resolves the frontmost application, ranks registered shell sessions by prompt/focus readiness before recency, and writes to the best candidate pipe without exposing process-tree or pipe details to callers
   - append writes inject messages that preserve space-separated buffer concatenation semantics across repeated calls
-  - clear resets the buffer and send emits a Return keystroke path without re-injecting text
+  - clear resets the buffer and send submits the existing shell buffer without re-injecting text
 - verify: swift test --filter OutputManagerTests
 
 ## Task 4
@@ -64,7 +65,7 @@
 - passes: true
 - ac:
   - Holding Right Command emits PTT begin and end events for dictation mode
-  - Holding Right Shift with Right Command emits command-mode PTT events
+  - Holding Right Shift with Right Command emits command-mode PTT events, and command mode remains latched for the rest of that PTT hold
   - Tapping Right Control toggles between PTT and OPEN modes and the selected mode persists for the app session
 - verify: swift test --filter HotkeyManagerTests
 
@@ -84,7 +85,7 @@
 - passes: true
 - ac:
   - The HUD presents in a non-key, click-through floating window that never steals focus from the active terminal
-  - Recording shows live partial text, transcribing shows activity, injected fades out, cleared dismisses immediately, and idle stays hidden
+  - Recording shows live partial text, transcribing shows activity, injected fades out, cleared dismisses immediately, output failures show a short visible error, and idle stays hidden
   - HUD mode indication reflects the current PTT or OPEN state while remaining driven only by published controller state
 - verify: xcodebuild test -scheme Egregore -destination 'platform=macOS' -only-testing:EgregoreTests/HUDStateTests
 
@@ -114,8 +115,8 @@
 - passes: true
 - ac:
   - OPEN-mode and PTT final transcriptions either append to the active terminal buffer or emit logs showing exactly where resolution failed
-  - Session discovery logs include the frontmost app PID, shell PID traversal, matched registry PID ancestry, and session file or pipe outcome without exposing implementation details to callers
-  - ROGER and ABORT attempts log whether the app executed send or clear and whether desktop permissions may block the action
+  - Session discovery logs include the frontmost app PID, shell PID traversal, matched registry PID ancestry, and prompt/focus metadata used for candidate ranking without exposing implementation details to callers
+  - ROGER and ABORT attempts log whether the app executed send or clear and whether shell targeting was applied, refused as ambiguous, or failed in delivery
   - The managed zsh snippet supports an opt-in debug log that proves handler entry and post-mutation buffer state during manual debugging
 - verify: swift test --filter ShellIntegrationInstallerTests && manual check in a fresh zsh terminal after installing the managed snippet, with logs confirming append and clear paths
 
@@ -139,3 +140,33 @@
   - In OPEN mode, a completed utterance detected by silence finalizes the current utterance, dismisses the HUD transcript state, and injects the finalized text into the focused terminal session
   - The live transcript behavior is implemented consistently across PTT and OPEN mode, with only the utterance-finalization trigger differing between modes
 - verify: swift test --filter HUDStateTests && manual check of one PTT utterance and one OPEN-mode utterance from live HUD transcript through final terminal injection
+
+## Task 15
+- desc: Replace snapshot-final HUD updates with true incremental partial transcription that stays visible long enough to be perceptible during live capture
+- deps: Task 5, Task 8, Task 9, Task 14
+- passes: false
+- ac:
+  - During an active utterance, the HUD updates from WhisperKit callback partials rather than waiting for a completed snapshot decode result
+  - Partial transcript updates are frequent and stable enough to be visually perceived in both PTT and OPEN mode before final injection occurs
+  - Final transcript completion still clears the live partial state and transitions cleanly into transcribing/injected behavior without stale partial flashes
+- verify: swift test --filter HUDStateTests && manual check that a multi-word utterance visibly updates in place while speaking in both PTT and OPEN mode
+
+## Task 16
+- desc: Make spoken ROGER and ABORT resolve to commands reliably in real use instead of falling through to normal text injection
+- deps: Task 4, Task 6, Task 8, Task 12
+- passes: false
+- ac:
+  - In PTT command mode, spoken `ROGER` and `ABORT` trigger send and clear outcomes respectively and never append literal command text
+  - In OPEN mode, naturally spoken standalone `ROGER` and `ABORT` trigger send and clear outcomes reliably enough for treadmill use without requiring brittle silence timing that commonly misclassifies them as dictation
+  - Normal dictation containing command words in longer phrases still injects as text unless the utterance satisfies the intended command criteria
+- verify: swift test --filter IntentResolverTests && swift test --filter SessionControllerIntegrationTests && manual check that standalone spoken `ROGER` and `ABORT` do not append to the terminal in either mode
+
+## Task 17
+- desc: Add higher-confidence integration proof for live partial HUD behavior and real command execution so mocked tests cannot mask regressions
+- deps: Task 12, Task 15, Task 16
+- passes: false
+- ac:
+  - Automated tests prove that partial transcription callbacks can reach the HUD as multiple visible updates during a single utterance
+  - Automated or harnessed integration proof verifies that `ROGER` and `ABORT` execute send and clear behavior through the real output path instead of merely resolving to mocked command intents
+  - The proof surfaces timing-sensitive regressions that the current mocked snapshot and resolver tests do not catch
+- verify: swift test && manual check of one live partial-transcript utterance plus one live `ROGER` and one live `ABORT` command against a fresh zsh session

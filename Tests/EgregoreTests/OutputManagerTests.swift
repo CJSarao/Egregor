@@ -1,6 +1,5 @@
 import XCTest
 import Darwin
-import ApplicationServices
 @testable import Egregore
 
 final class OutputManagerTests: XCTestCase {
@@ -147,35 +146,22 @@ final class OutputManagerTests: XCTestCase {
     }
 
     func testSendDoesNotCrash() {
-        // CGEvent posting may silently fail without Accessibility permissions in CI.
-        let manager = ShellOutputManager(sessionResolver: { nil })
+        let (path, fd) = makePipe()
+        defer { Darwin.close(fd); Darwin.unlink(path) }
+
+        let manager = ShellOutputManager(sessionResolver: { path })
         manager.send()
+
+        XCTAssertEqual(readAll(fd: fd), "send|\n")
     }
 
-    func testSendLogsWarningWithoutAccessibility() {
+    func testSendWithoutSessionLogsError() {
         let logger = RuntimeLogger(fileURL: logFile)
         let manager = ShellOutputManager(sessionResolver: { nil }, logger: logger)
         manager.send()
 
         let contents = readLog()
-        // In CI, AXIsProcessTrusted() returns false so we expect the early return log
-        if !AXIsProcessTrusted() {
-            XCTAssertTrue(contents.contains("Accessibility not trusted"))
-        }
-    }
-
-    func testSendReturnsEarlyWithoutSession() {
-        let logger = RuntimeLogger(fileURL: logFile)
-        let manager = ShellOutputManager(sessionResolver: { nil }, logger: logger)
-        manager.send()
-
-        let contents = readLog()
-        // If accessibility is trusted but no session, we get the session error.
-        // If not trusted, we get the accessibility error (early return before session check).
-        let hasAccessibilityError = contents.contains("Accessibility not trusted")
-        let hasSessionError = contents.contains("send failed: no registered shell session found")
-        XCTAssertTrue(hasAccessibilityError || hasSessionError,
-                      "Expected either accessibility or session error in log, got: \(contents)")
+        XCTAssertTrue(contents.contains("writeToPipe failed: no registered shell session found"))
     }
 
     func testMissingPipePathLogsDistinctError() {
@@ -314,5 +300,81 @@ final class OutputManagerTests: XCTestCase {
         let contents = readLog()
         XCTAssertTrue(contents.contains("session resolve: candidates"))
         XCTAssertTrue(contents.contains("shell PID 202"))
+    }
+
+    func testResolveSessionPrefersPromptReadyShellOverBusyShell() throws {
+        let (busyPath, busyFD) = makePipe()
+        let (readyPath, readyFD) = makePipe()
+        defer {
+            Darwin.close(busyFD)
+            Darwin.close(readyFD)
+            Darwin.unlink(busyPath)
+            Darwin.unlink(readyPath)
+        }
+
+        try """
+        {"pipePath":"\(busyPath)","lastPromptAt":10.0,"lastFocusAt":10.0,"isFocused":false,"isAtPrompt":false,"tty":"/dev/ttys001"}
+        """.write(to: registryURL.appending(path: "701"), atomically: true, encoding: .utf8)
+        try """
+        {"pipePath":"\(readyPath)","lastPromptAt":30.0,"lastFocusAt":30.0,"isFocused":true,"isAtPrompt":true,"tty":"/dev/ttys002"}
+        """.write(to: registryURL.appending(path: "702"), atomically: true, encoding: .utf8)
+
+        let manager = ShellOutputManager(
+            registryURL: registryURL,
+            activityURL: activityURL,
+            frontmostApplicationProvider: { .init(pid: 700, name: "Ghostty") },
+            childPIDProvider: { pid in
+                switch pid {
+                case 700: return [701, 702]
+                default: return []
+                }
+            },
+            visibleWindowPIDsProvider: { [700] },
+            logger: RuntimeLogger(fileURL: logFile)
+        )
+
+        manager.clear()
+
+        XCTAssertEqual(readAll(fd: busyFD), "")
+        XCTAssertEqual(readAll(fd: readyFD), "clear|\n")
+    }
+
+    func testResolveSessionFailsClosedWhenTopCandidatesAreAmbiguous() throws {
+        let (leftPath, leftFD) = makePipe()
+        let (rightPath, rightFD) = makePipe()
+        defer {
+            Darwin.close(leftFD)
+            Darwin.close(rightFD)
+            Darwin.unlink(leftPath)
+            Darwin.unlink(rightPath)
+        }
+
+        try """
+        {"pipePath":"\(leftPath)","lastPromptAt":40.0,"lastFocusAt":40.0,"isFocused":true,"isAtPrompt":true,"tty":"/dev/ttys003"}
+        """.write(to: registryURL.appending(path: "801"), atomically: true, encoding: .utf8)
+        try """
+        {"pipePath":"\(rightPath)","lastPromptAt":40.0,"lastFocusAt":40.0,"isFocused":true,"isAtPrompt":true,"tty":"/dev/ttys004"}
+        """.write(to: registryURL.appending(path: "802"), atomically: true, encoding: .utf8)
+
+        let logger = RuntimeLogger(fileURL: logFile)
+        let manager = ShellOutputManager(
+            registryURL: registryURL,
+            activityURL: activityURL,
+            frontmostApplicationProvider: { .init(pid: 800, name: "Ghostty") },
+            childPIDProvider: { pid in
+                switch pid {
+                case 800: return [801, 802]
+                default: return []
+                }
+            },
+            visibleWindowPIDsProvider: { [800] },
+            logger: logger
+        )
+
+        manager.append("ambiguous")
+
+        XCTAssertEqual(readAll(fd: leftFD), "")
+        XCTAssertEqual(readAll(fd: rightFD), "")
+        XCTAssertTrue(readLog().contains("ambiguous top candidates"))
     }
 }

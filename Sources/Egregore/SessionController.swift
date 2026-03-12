@@ -13,7 +13,6 @@ actor SessionController {
     private(set) var operatingMode: OperatingMode = .ptt
     private var pendingInputMode: InputMode?
     private var isRecording = false
-    private var partialSequence = 0
     private var partialTask: Task<Void, Never>?
 
     nonisolated let hudStates: AsyncStream<HUDState>
@@ -43,6 +42,7 @@ actor SessionController {
         Task { await runHotkeyLoop() }
         Task { await runSegmentLoop() }
         Task { await runCaptureSnapshotLoop() }
+        Task { await runPartialStreamLoop() }
     }
 
     private func runHotkeyLoop() async {
@@ -98,14 +98,17 @@ actor SessionController {
     private func runCaptureSnapshotLoop() async {
         for await snapshot in pipeline.captureSnapshots {
             guard isRecording else { continue }
-            partialSequence += 1
-            let sequence = partialSequence
-            let mode = operatingMode
             cancelPartialTask()
             partialTask = Task {
-                let text = await self.transcriber.transcribePartial(snapshot)
-                await self.applyPartialTranscript(text, sequence: sequence, mode: mode)
+                _ = await self.transcriber.transcribePartial(snapshot)
             }
+        }
+    }
+
+    private func runPartialStreamLoop() async {
+        for await text in transcriber.partialTextStream {
+            guard isRecording, !text.isEmpty else { continue }
+            hudContinuation.yield(.recording(mode: operatingMode, partialText: text))
         }
     }
 
@@ -130,26 +133,36 @@ actor SessionController {
         }
     }
 
-    private func applyPartialTranscript(_ text: String, sequence: Int, mode: OperatingMode) async {
-        guard isRecording, sequence == partialSequence, !text.isEmpty else { return }
-        hudContinuation.yield(.recording(mode: mode, partialText: text))
-    }
-
     private func dispatch(_ intent: Intent, result: TranscriptionResult) {
         switch intent {
         case .inject(let text):
             log.log("dispatch: inject chars=\(text.count)", category: .session)
-            output.append(text)
-            log.log("dispatch: append handed to output manager", category: .session)
-            hudContinuation.yield(.injected(text))
+            switch output.append(text) {
+            case .success:
+                log.log("dispatch: append handed to output manager", category: .session)
+                hudContinuation.yield(.injected(text))
+            case .failure(let message):
+                log.error("dispatch: append failed: \(message)", category: .session)
+                hudContinuation.yield(.error(message))
+            }
         case .command(.roger):
             log.log("dispatch: ROGER → send (confidence=\(result.confidence))", category: .session)
-            output.send()
-            hudContinuation.yield(.injected("⏎"))
+            switch output.send() {
+            case .success:
+                hudContinuation.yield(.injected("⏎"))
+            case .failure(let message):
+                log.error("dispatch: send failed: \(message)", category: .session)
+                hudContinuation.yield(.error(message))
+            }
         case .command(.abort):
             log.log("dispatch: ABORT → clear (confidence=\(result.confidence))", category: .session)
-            output.clear()
-            hudContinuation.yield(.cleared)
+            switch output.clear() {
+            case .success:
+                hudContinuation.yield(.cleared)
+            case .failure(let message):
+                log.error("dispatch: clear failed: \(message)", category: .session)
+                hudContinuation.yield(.error(message))
+            }
         case .discard:
             log.log("dispatch: discard chars=\(result.text.count) confidence=\(result.confidence)", category: .session)
             hudContinuation.yield(.idle)
@@ -157,7 +170,6 @@ actor SessionController {
     }
 
     private func resetPartialTracking() {
-        partialSequence += 1
         cancelPartialTask()
     }
 

@@ -14,6 +14,7 @@ final class ShellOutputManager: OutputManager {
         let frontmostAppPID: pid_t?
         let frontmostAppName: String?
         let ancestry: [pid_t]
+        let metadata: SessionMetadata?
     }
 
     private struct SessionMatch {
@@ -21,6 +22,33 @@ final class ShellOutputManager: OutputManager {
         let shellPID: pid_t
         let ancestry: [pid_t]
         let lastActivity: Date?
+        let metadata: SessionMetadata
+    }
+
+    private struct SessionMetadata: Codable, Equatable {
+        let pipePath: String
+        let lastPromptAt: Double?
+        let lastFocusAt: Double?
+        let isFocused: Bool?
+        let isAtPrompt: Bool?
+        let tty: String?
+
+        var promptDate: Date? { lastPromptAt.map(Date.init(timeIntervalSince1970:)) }
+        var focusDate: Date? { lastFocusAt.map(Date.init(timeIntervalSince1970:)) }
+        var effectiveFocus: Bool { isFocused ?? false }
+        var effectivePrompt: Bool { isAtPrompt ?? false }
+
+        static func legacy(pipePath: String, lastActivity: Date?) -> SessionMetadata {
+            let seconds = lastActivity?.timeIntervalSince1970
+            return SessionMetadata(
+                pipePath: pipePath,
+                lastPromptAt: seconds,
+                lastFocusAt: seconds,
+                isFocused: nil,
+                isAtPrompt: nil,
+                tty: nil
+            )
+        }
     }
 
     private let sessionResolver: () -> SessionTarget?
@@ -51,43 +79,25 @@ final class ShellOutputManager: OutputManager {
     init(sessionResolver: @escaping () -> String?, logger: RuntimeLogger = .shared) {
         self.sessionResolver = {
             sessionResolver().map {
-                SessionTarget(pipePath: $0, shellPID: nil, frontmostAppPID: nil, frontmostAppName: nil, ancestry: [])
+                SessionTarget(pipePath: $0, shellPID: nil, frontmostAppPID: nil, frontmostAppName: nil, ancestry: [], metadata: nil)
             }
         }
         self.log = logger
     }
 
-    func append(_ text: String) {
+    func append(_ text: String) -> OutputResult {
         writeToPipe(action: "inject", text: text)
     }
 
-    func clear() {
+    func clear() -> OutputResult {
         writeToPipe(action: "clear", text: "")
     }
 
-    func send() {
-        log.log("send (Return keystroke)", category: .output)
-        if !AXIsProcessTrusted() {
-            log.error("send: Accessibility not trusted — keystroke will be silently dropped", category: .output)
-            return
-        }
-        guard let target = sessionResolver() else {
-            log.error("send failed: no registered shell session found", category: .output)
-            return
-        }
-        log.log("send: targeting shell PID=\(Self.describe(target.shellPID)) frontApp=\(Self.describe(target.frontmostAppName))", category: .output)
-        let src = CGEventSource(stateID: .hidSystemState)
-        guard let down = CGEvent(keyboardEventSource: src, virtualKey: 0x24, keyDown: true),
-              let up = CGEvent(keyboardEventSource: src, virtualKey: 0x24, keyDown: false) else {
-            log.error("send failed: could not create CGEvent", category: .output)
-            return
-        }
-        down.post(tap: .cghidEventTap)
-        up.post(tap: .cghidEventTap)
-        log.log("send: Return keystroke posted for shell PID=\(Self.describe(target.shellPID))", category: .output)
+    func send() -> OutputResult {
+        writeToPipe(action: "send", text: "")
     }
 
-    private func writeToPipe(action: String, text: String) {
+    private func writeToPipe(action: String, text: String) -> OutputResult {
         let message = "\(action)|\(text)\n"
         log.log(
             "writeToPipe: action=\(action) textBytes=\(text.utf8.count) payloadBytes=\(message.utf8.count)",
@@ -95,14 +105,14 @@ final class ShellOutputManager: OutputManager {
         )
         guard let target = sessionResolver() else {
             log.error("writeToPipe failed: no registered shell session found", category: .output)
-            return
+            return .failure("No active terminal target")
         }
         if !FileManager.default.fileExists(atPath: target.pipePath) {
             log.error(
                 "writeToPipe failed: resolved pipe missing at \(target.pipePath) action=\(action) shellPID=\(Self.describe(target.shellPID)) frontmostApp=\(Self.describe(target.frontmostAppName)) frontPID=\(Self.describe(target.frontmostAppPID)) ancestry=\(Self.describe(target.ancestry))",
                 category: .output
             )
-            return
+            return .failure("Terminal session disappeared")
         }
         let fd = Darwin.open(target.pipePath, O_WRONLY | O_NONBLOCK)
         guard fd >= 0 else {
@@ -110,7 +120,7 @@ final class ShellOutputManager: OutputManager {
                 "writeToPipe failed: could not open pipe at \(target.pipePath) action=\(action) shellPID=\(Self.describe(target.shellPID)) errno=\(errno)",
                 category: .output
             )
-            return
+            return .failure("Terminal session is busy")
         }
         defer { Darwin.close(fd) }
         var writeOk = true
@@ -136,7 +146,9 @@ final class ShellOutputManager: OutputManager {
                 "writeToPipe: delivered action=\(action) bytes=\(message.utf8.count) pipe=\(target.pipePath) shellPID=\(Self.describe(target.shellPID)) frontmostApp=\(Self.describe(target.frontmostAppName)) frontPID=\(Self.describe(target.frontmostAppPID)) ancestry=\(Self.describe(target.ancestry))",
                 category: .output
             )
+            return .success
         }
+        return .failure("Failed to write to terminal")
     }
 
     private static func resolveSession(
@@ -177,7 +189,8 @@ final class ShellOutputManager: OutputManager {
                 shellPID: match.shellPID,
                 frontmostAppPID: frontPID,
                 frontmostAppName: appName,
-                ancestry: match.ancestry
+                ancestry: match.ancestry,
+                metadata: match.metadata
             )
         } else {
             logger.error("session resolve: no registered shell under \(appName) (PID \(frontPID)), registry: \(registryURL.path())", category: .output)
@@ -195,19 +208,23 @@ final class ShellOutputManager: OutputManager {
     ) -> [SessionMatch] {
         var matches: [SessionMatch] = []
         let sessionFile = registryURL.appending(path: "\(pid)")
-        if let path = try? String(contentsOf: sessionFile, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines) {
-            if path.isEmpty {
+        if let metadata = readSessionMetadata(from: sessionFile, activityURL: activityURL, pid: pid) {
+            if metadata.pipePath.isEmpty {
                 logger.error("session resolve: empty registry entry for PID \(pid) at \(sessionFile.path())", category: .output)
-            } else if !FileManager.default.fileExists(atPath: path) {
-                logger.error("session resolve: stale registry entry PID \(pid) → \(path) via ancestry \(describe(ancestry))", category: .output)
+            } else if !FileManager.default.fileExists(atPath: metadata.pipePath) {
+                logger.error("session resolve: stale registry entry PID \(pid) → \(metadata.pipePath) via ancestry \(describe(ancestry))", category: .output)
             } else {
-                let lastActivity = readLastActivity(for: pid, activityURL: activityURL)
                 logger.log(
-                    "session resolve: matched PID \(pid) via ancestry \(describe(ancestry)) → \(path) activity=\(describe(lastActivity))",
+                    "session resolve: matched PID \(pid) via ancestry \(describe(ancestry)) → \(metadata.pipePath) prompt=\(describe(metadata.promptDate)) focus=\(describe(metadata.focusDate)) isFocused=\(metadata.effectiveFocus) isAtPrompt=\(metadata.effectivePrompt) tty=\(describe(metadata.tty))",
                     category: .output
                 )
-                matches.append(SessionMatch(pipePath: path, shellPID: pid, ancestry: ancestry, lastActivity: lastActivity))
+                matches.append(SessionMatch(
+                    pipePath: metadata.pipePath,
+                    shellPID: pid,
+                    ancestry: ancestry,
+                    lastActivity: metadata.promptDate ?? metadata.focusDate,
+                    metadata: metadata
+                ))
             }
         }
         let children = childPIDProvider(pid)
@@ -231,30 +248,66 @@ final class ShellOutputManager: OutputManager {
         guard !matches.isEmpty else { return nil }
         if matches.count > 1 {
             let summary = matches
-                .sorted {
-                    if $0.lastActivity != $1.lastActivity {
-                        return ($0.lastActivity ?? .distantPast) > ($1.lastActivity ?? .distantPast)
-                    }
-                    if $0.ancestry.count != $1.ancestry.count {
-                        return $0.ancestry.count > $1.ancestry.count
-                    }
-                    return $0.shellPID < $1.shellPID
+                .sorted(by: isPreferred(_:over:))
+                .map {
+                    "pid=\($0.shellPID) focused=\($0.metadata.effectiveFocus) prompt=\($0.metadata.effectivePrompt) focusAt=\(describe($0.metadata.focusDate)) promptAt=\(describe($0.metadata.promptDate)) ancestry=\(describe($0.ancestry)) tty=\(describe($0.metadata.tty))"
                 }
-                .map { "pid=\($0.shellPID) activity=\(describe($0.lastActivity)) ancestry=\(describe($0.ancestry))" }
                 .joined(separator: "; ")
             logger.log("session resolve: candidates \(summary)", category: .output)
         }
-        return matches.max {
-            let lhsActivity = $0.lastActivity ?? .distantPast
-            let rhsActivity = $1.lastActivity ?? .distantPast
-            if lhsActivity != rhsActivity {
-                return lhsActivity < rhsActivity
-            }
-            if $0.ancestry.count != $1.ancestry.count {
-                return $0.ancestry.count < $1.ancestry.count
-            }
-            return $0.shellPID > $1.shellPID
+        let sorted = matches.sorted(by: isPreferred(_:over:))
+        guard let best = sorted.first else { return nil }
+        if sorted.count > 1, samePriority(best, sorted[1]) {
+            logger.error("session resolve: ambiguous top candidates; refusing to inject until focus is clearer", category: .output)
+            return nil
         }
+        return best
+    }
+
+    private static func readSessionMetadata(from sessionFile: URL, activityURL: URL, pid: pid_t) -> SessionMetadata? {
+        guard let raw = try? String(contentsOf: sessionFile, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else {
+            return nil
+        }
+        if raw.first == "{",
+           let data = raw.data(using: .utf8),
+           let metadata = try? JSONDecoder().decode(SessionMetadata.self, from: data) {
+            return metadata
+        }
+        let lastActivity = readLastActivity(for: pid, activityURL: activityURL)
+        return SessionMetadata.legacy(pipePath: raw, lastActivity: lastActivity)
+    }
+
+    private static func isPreferred(_ lhs: SessionMatch, over rhs: SessionMatch) -> Bool {
+        if lhs.metadata.effectiveFocus != rhs.metadata.effectiveFocus {
+            return lhs.metadata.effectiveFocus && !rhs.metadata.effectiveFocus
+        }
+        if lhs.metadata.effectivePrompt != rhs.metadata.effectivePrompt {
+            return lhs.metadata.effectivePrompt && !rhs.metadata.effectivePrompt
+        }
+        let lhsFocus = lhs.metadata.focusDate ?? .distantPast
+        let rhsFocus = rhs.metadata.focusDate ?? .distantPast
+        if lhsFocus != rhsFocus {
+            return lhsFocus > rhsFocus
+        }
+        let lhsPrompt = lhs.metadata.promptDate ?? lhs.lastActivity ?? .distantPast
+        let rhsPrompt = rhs.metadata.promptDate ?? rhs.lastActivity ?? .distantPast
+        if lhsPrompt != rhsPrompt {
+            return lhsPrompt > rhsPrompt
+        }
+        if lhs.ancestry.count != rhs.ancestry.count {
+            return lhs.ancestry.count > rhs.ancestry.count
+        }
+        return lhs.shellPID < rhs.shellPID
+    }
+
+    private static func samePriority(_ lhs: SessionMatch, _ rhs: SessionMatch) -> Bool {
+        lhs.metadata.effectiveFocus == rhs.metadata.effectiveFocus &&
+        lhs.metadata.effectivePrompt == rhs.metadata.effectivePrompt &&
+        lhs.metadata.focusDate == rhs.metadata.focusDate &&
+        (lhs.metadata.promptDate ?? lhs.lastActivity) == (rhs.metadata.promptDate ?? rhs.lastActivity) &&
+        lhs.ancestry.count == rhs.ancestry.count
     }
 
     private static func readLastActivity(for pid: pid_t, activityURL: URL) -> Date? {

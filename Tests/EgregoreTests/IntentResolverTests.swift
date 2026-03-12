@@ -108,15 +108,14 @@ final class IntentResolverTests: XCTestCase {
         XCTAssertEqual(resolver.resolve(result, mode: .dictation), .command(.abort))
     }
 
-    func testVocabularyWithInsufficientSilenceBeforeInjects() {
+    func testVocabularyWithLowSilenceBeforeStillResolvesCommand() {
         let result = makeResult(text: "ROGER", silenceBefore: .milliseconds(1000), duration: .milliseconds(800))
-        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .inject("ROGER"))
+        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .command(.roger))
     }
 
-    func testVocabularyWithExactSilenceThresholdBoundaryInjects() {
-        // silenceBefore must be GREATER THAN 1500ms, not equal
-        let result = makeResult(text: "ROGER", silenceBefore: .milliseconds(1500), duration: .milliseconds(800))
-        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .inject("ROGER"))
+    func testVocabularyWithZeroSilenceBeforeStillResolvesCommand() {
+        let result = makeResult(text: "ROGER", silenceBefore: .zero, duration: .milliseconds(800))
+        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .command(.roger))
     }
 
     func testVocabularyWithDurationAtOrAboveThresholdInjects() {
@@ -125,11 +124,19 @@ final class IntentResolverTests: XCTestCase {
         XCTAssertEqual(resolver.resolve(result, mode: .dictation), .inject("ABORT"))
     }
 
-    func testVocabularyWithInsufficientTrailingSilenceInjects() {
+    func testVocabularyWithLowTrailingSilenceStillResolvesCommand() {
         let result = makeResult(text: "ROGER",
                                 silenceBefore: .milliseconds(2000),
                                 duration: .milliseconds(800),
-                                trailingSilenceAfter: .milliseconds(600))
+                                trailingSilenceAfter: .milliseconds(100))
+        XCTAssertEqual(resolver.resolve(result, mode: .dictation), .command(.roger))
+    }
+
+    func testVocabularyNotEndedBySilenceInjects() {
+        let result = makeResult(text: "ROGER",
+                                silenceBefore: .milliseconds(2000),
+                                duration: .milliseconds(800),
+                                endedBySilence: false)
         XCTAssertEqual(resolver.resolve(result, mode: .dictation), .inject("ROGER"))
     }
 

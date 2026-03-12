@@ -64,10 +64,16 @@ enum VoiceCommand {
     case abort
 }
 
+enum OutputResult: Equatable {
+    case success
+    case failure(String)
+}
+
 enum HUDState: Equatable {
     case idle
     case recording(mode: SessionController.OperatingMode, partialText: String? = nil)
     case transcribing
     case injected(String)
     case cleared
+    case error(String)
 }
