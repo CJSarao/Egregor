@@ -81,6 +81,8 @@ final class HUDWindowController {
 
 @MainActor
 final class HUDViewModel: ObservableObject {
+    private static let finalStateDwell: UInt64 = 900_000_000
+
     @Published var state: HUDState = .idle
     @Published var visible = false
 
@@ -101,27 +103,32 @@ final class HUDViewModel: ObservableObject {
         switch newState {
         case .idle:
             visible = false
-        case .recording, .transcribing:
+        case .listening, .recording, .transcribing:
             visible = true
-        case .injected:
+        case .injected(_, let continueListening):
             visible = true
             fadeTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                try? await Task.sleep(nanoseconds: Self.finalStateDwell)
                 guard !Task.isCancelled else { return }
-                self?.visible = false
-                self?.state = .idle
+                self?.state = continueListening ? .listening : .idle
+                self?.visible = continueListening
             }
-        case .error:
+        case .cleared(let continueListening):
+            visible = true
+            fadeTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: Self.finalStateDwell)
+                guard !Task.isCancelled else { return }
+                self?.state = continueListening ? .listening : .idle
+                self?.visible = continueListening
+            }
+        case .error(_, let continueListening):
             visible = true
             fadeTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: 1_800_000_000)
                 guard !Task.isCancelled else { return }
-                self?.visible = false
-                self?.state = .idle
+                self?.state = continueListening ? .listening : .idle
+                self?.visible = continueListening
             }
-        case .cleared:
-            visible = false
-            state = .idle
         }
     }
 }
@@ -159,6 +166,10 @@ struct HUDContentView: View {
     @ViewBuilder
     private var statusIcon: some View {
         switch viewModel.state {
+        case .listening:
+            Circle()
+                .fill(.red)
+                .frame(width: 10, height: 10)
         case .recording:
             Circle()
                 .fill(.red)
@@ -180,27 +191,47 @@ struct HUDContentView: View {
     @ViewBuilder
     private var statusText: some View {
         switch viewModel.state {
+        case .listening:
+            Text("Listening")
+                .font(.system(.body, design: .monospaced))
+                .foregroundStyle(.primary)
         case .recording(let partialText):
-            if let partialText, !partialText.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Listening")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
                 Text(partialText)
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(.primary)
                     .lineLimit(2)
-            } else {
-                Text("Listening")
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(.primary)
             }
-        case .transcribing:
-            Text("Transcribing…")
-                .font(.system(.body, design: .monospaced))
-                .foregroundStyle(.secondary)
-        case .injected(let text):
+        case .transcribing(let lastText):
+            if let lastText, !lastText.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Finalizing")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Text(lastText)
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                }
+            } else {
+                Text("Transcribing…")
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+        case .injected(let text, _):
             Text(text)
                 .font(.system(.body, design: .monospaced))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
-        case .error(let text):
+        case .cleared:
+            Text("Cleared")
+                .font(.system(.body, design: .monospaced))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+        case .error(let text, _):
             Text(text)
                 .font(.system(.body, design: .monospaced))
                 .foregroundStyle(.primary)

@@ -77,7 +77,7 @@ final class HUDStateTests: XCTestCase {
         hotkeys.emit(.toggle)
 
         let states = await stateTask.value
-        XCTAssertEqual(states.first, .recording())
+        XCTAssertEqual(states.first, .listening)
     }
 
     // MARK: - Dictation: recording → transcribing → injected
@@ -91,8 +91,8 @@ final class HUDStateTests: XCTestCase {
                                          transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
-        // recording + transcribing + injected + recording(auto-restart) = 4 states
-        let stateTask = Task { await self.collectStates(from: ctrl, count: 4) }
+        // listening + transcribing + injected = 3 states
+        let stateTask = Task { await self.collectStates(from: ctrl, count: 3) }
         try await Task.sleep(nanoseconds: 20_000_000)
 
         hotkeys.emit(.toggle)
@@ -101,9 +101,9 @@ final class HUDStateTests: XCTestCase {
 
         let states = await stateTask.value
         XCTAssertGreaterThanOrEqual(states.count, 3)
-        XCTAssertEqual(states[0], .recording())
-        XCTAssertEqual(states[1], .transcribing)
-        XCTAssertEqual(states[2], .injected("git status"))
+        XCTAssertEqual(states[0], .listening)
+        XCTAssertEqual(states[1], .transcribing())
+        XCTAssertEqual(states[2], .injected("git status", continueListening: true))
     }
 
     // MARK: - Discard emits idle then recording (auto-restart)
@@ -117,8 +117,8 @@ final class HUDStateTests: XCTestCase {
                                          transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
-        // recording + transcribing + idle + recording(auto-restart) = 4 states
-        let stateTask = Task { await self.collectStates(from: ctrl, count: 4) }
+        // listening + transcribing + listening = 3 states
+        let stateTask = Task { await self.collectStates(from: ctrl, count: 3) }
         try await Task.sleep(nanoseconds: 20_000_000)
 
         hotkeys.emit(.toggle)
@@ -127,9 +127,9 @@ final class HUDStateTests: XCTestCase {
 
         let states = await stateTask.value
         XCTAssertGreaterThanOrEqual(states.count, 3)
-        XCTAssertEqual(states[0], .recording())
-        XCTAssertEqual(states[1], .transcribing)
-        XCTAssertEqual(states[2], .idle)
+        XCTAssertEqual(states[0], .listening)
+        XCTAssertEqual(states[1], .transcribing())
+        XCTAssertEqual(states[2], .listening)
     }
 
     // MARK: - Toggle off emits idle
@@ -143,7 +143,7 @@ final class HUDStateTests: XCTestCase {
                                          transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
-        // recording + idle = 2 states
+        // listening + idle = 2 states
         let stateTask = Task { await self.collectStates(from: ctrl, count: 2) }
         try await Task.sleep(nanoseconds: 20_000_000)
         hotkeys.emit(.toggle)
@@ -152,7 +152,7 @@ final class HUDStateTests: XCTestCase {
 
         let states = await stateTask.value
         XCTAssertEqual(states.count, 2)
-        XCTAssertEqual(states[0], .recording())
+        XCTAssertEqual(states[0], .listening)
         XCTAssertEqual(states[1], .idle)
     }
 
@@ -170,7 +170,7 @@ final class HUDStateTests: XCTestCase {
                                          transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
-        // recording + transcribing + injected = 3
+        // listening + transcribing + injected = 3
         let stateTask = Task { await self.collectStates(from: ctrl, count: 3) }
         try await Task.sleep(nanoseconds: 20_000_000)
         hotkeys.emit(.toggle)
@@ -181,9 +181,9 @@ final class HUDStateTests: XCTestCase {
 
         let states = await stateTask.value
         XCTAssertGreaterThanOrEqual(states.count, 3)
-        XCTAssertEqual(states[0], .recording())
-        XCTAssertEqual(states[1], .transcribing)
-        XCTAssertEqual(states[2], .injected("ls -la"))
+        XCTAssertEqual(states[0], .listening)
+        XCTAssertEqual(states[1], .transcribing())
+        XCTAssertEqual(states[2], .injected("ls -la", continueListening: true))
     }
 
     // MARK: - Isolated ABORT → cleared
@@ -212,9 +212,9 @@ final class HUDStateTests: XCTestCase {
 
         let states = await stateTask.value
         XCTAssertGreaterThanOrEqual(states.count, 3)
-        XCTAssertEqual(states[0], .recording())
-        XCTAssertEqual(states[1], .transcribing)
-        XCTAssertEqual(states[2], .cleared)
+        XCTAssertEqual(states[0], .listening)
+        XCTAssertEqual(states[1], .transcribing())
+        XCTAssertEqual(states[2], .cleared(continueListening: true))
     }
 
     func testAppendFailureEmitsErrorState() async throws {
@@ -239,9 +239,9 @@ final class HUDStateTests: XCTestCase {
         await pipeline.emitSegment(makeSpeechSegment())
 
         let states = await stateTask.value
-        XCTAssertEqual(states[0], .recording())
-        XCTAssertEqual(states[1], .transcribing)
-        XCTAssertEqual(states[2], .error("No active terminal target"))
+        XCTAssertEqual(states[0], .listening)
+        XCTAssertEqual(states[1], .transcribing())
+        XCTAssertEqual(states[2], .error("No active terminal target", continueListening: true))
     }
 
     func testSendFailureEmitsErrorState() async throws {
@@ -273,7 +273,7 @@ final class HUDStateTests: XCTestCase {
                                                      endedBySilence: true))
 
         let states = await stateTask.value
-        XCTAssertEqual(states[2], .error("Terminal session is busy"))
+        XCTAssertEqual(states[2], .error("Terminal session is busy", continueListening: true))
     }
 
     // MARK: - Live transcript partial text in HUD
@@ -294,7 +294,7 @@ final class HUDStateTests: XCTestCase {
         txr.emitPartial("git")
 
         let states = await stateTask.value
-        XCTAssertEqual(states[0], .recording())
+        XCTAssertEqual(states[0], .listening)
         XCTAssertEqual(states[1], .recording(partialText: "git"))
     }
 
@@ -316,7 +316,7 @@ final class HUDStateTests: XCTestCase {
         txr.emitPartial("git status")
 
         let states = await stateTask.value
-        XCTAssertEqual(states[0], .recording())
+        XCTAssertEqual(states[0], .listening)
         XCTAssertEqual(states[1], .recording(partialText: "g"))
         XCTAssertEqual(states[2], .recording(partialText: "git"))
         XCTAssertEqual(states[3], .recording(partialText: "git status"))
@@ -331,7 +331,7 @@ final class HUDStateTests: XCTestCase {
                                          transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
         await ctrl.start()
 
-        // Collect the normal sequence: recording → partial → transcribing → injected
+        // Collect the normal sequence: listening → partial → idle
         let stateTask = Task { await self.collectStates(from: ctrl, count: 4) }
         try await Task.sleep(nanoseconds: 20_000_000)
 
@@ -377,8 +377,37 @@ final class HUDStateTests: XCTestCase {
         txr.emitPartial("hello")
 
         let states = await stateTask.value
-        XCTAssertEqual(states[0], .recording())
+        XCTAssertEqual(states[0], .listening)
         XCTAssertEqual(states[1], .recording(partialText: "hello"))
+    }
+
+    func testFinalResultDoesNotImmediatelyBounceBackToListeningState() async throws {
+        let hotkeys = MockHotkeyManager()
+        let pipeline = MockAudioPipeline()
+        let txr = MockTranscriber(makeResult(text: "git status"))
+        let output = MockOutputManager()
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
+        await ctrl.start()
+
+        let stateTask = Task { await self.collectStates(from: ctrl, count: 3, timeout: .seconds(2)) }
+        try await Task.sleep(nanoseconds: 20_000_000)
+
+        hotkeys.emit(.toggle)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        await pipeline.emitSegment(makeSpeechSegment())
+
+        let states = await stateTask.value
+        XCTAssertEqual(states, [
+            .listening,
+            .transcribing(),
+            .injected("git status", continueListening: true),
+        ])
     }
 
     func testPartialTextNotEmittedAfterSegmentProcessed() async throws {

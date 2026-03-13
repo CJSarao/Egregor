@@ -40,6 +40,7 @@ final class ShellIntegrationInstallerTests: XCTestCase {
         XCTAssertTrue(s.contains("inject)"))
         XCTAssertTrue(s.contains("clear)"))
         XCTAssertTrue(s.contains("send)"))
+        XCTAssertTrue(s.contains("zle -U $'\\n'"))
         XCTAssertTrue(s.contains("zle -F"))
         XCTAssertTrue(s.contains("add-zsh-hook"))
         XCTAssertTrue(s.contains("add-zle-hook-widget"))

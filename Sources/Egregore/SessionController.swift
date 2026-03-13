@@ -7,9 +7,13 @@ actor SessionController {
     private let transcriber: any Transcriber
     private let resolver: any IntentResolver
     private let output: any OutputManager
+    private let textNormalizer: TerminalTextNormalizer
     private let log: RuntimeLogger
 
-    private var isRecording = false
+    private var isMicOpen = false
+    private var acceptsPartialUpdates = false
+    private var pendingSnapshot: SpeechCaptureSnapshot?
+    private var lastLiveTranscript: String?
     private var partialTask: Task<Void, Never>?
 
     nonisolated let hudStates: AsyncStream<HUDState>
@@ -21,6 +25,7 @@ actor SessionController {
         transcriber: any Transcriber,
         resolver: any IntentResolver,
         output: any OutputManager,
+        textNormalizer: TerminalTextNormalizer = TerminalTextNormalizer(),
         logger: RuntimeLogger = .shared
     ) {
         self.hotkeys = hotkeys
@@ -28,6 +33,7 @@ actor SessionController {
         self.transcriber = transcriber
         self.resolver = resolver
         self.output = output
+        self.textNormalizer = textNormalizer
         self.log = logger
 
         var cont: AsyncStream<HUDState>.Continuation!
@@ -52,17 +58,17 @@ actor SessionController {
         log.log("hotkey event: \(event)", category: .session)
         switch event {
         case .toggle:
-            if isRecording {
-                isRecording = false
-                cancelPartialTask()
+            if isMicOpen {
+                isMicOpen = false
+                stopCurrentUtterance()
                 log.log("toggle → stop recording", category: .session)
                 hudContinuation.yield(.idle)
                 await pipeline.stop()
             } else {
-                isRecording = true
-                resetPartialTracking()
+                isMicOpen = true
+                beginListeningCycle()
                 log.log("toggle → start recording", category: .session)
-                hudContinuation.yield(.recording())
+                hudContinuation.yield(.listening)
                 await pipeline.start()
             }
         }
@@ -70,82 +76,109 @@ actor SessionController {
 
     private func runCaptureSnapshotLoop() async {
         for await snapshot in pipeline.captureSnapshots {
-            guard isRecording else { continue }
-            cancelPartialTask()
-            partialTask = Task {
-                _ = await self.transcriber.transcribePartial(snapshot)
-            }
+            guard isMicOpen, acceptsPartialUpdates else { continue }
+            pendingSnapshot = snapshot
+            ensurePartialWorker()
         }
     }
 
     private func runPartialStreamLoop() async {
         for await text in transcriber.partialTextStream {
-            guard isRecording, !text.isEmpty else { continue }
-            hudContinuation.yield(.recording(partialText: text))
+            guard isMicOpen, acceptsPartialUpdates else { continue }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, trimmed != lastLiveTranscript else { continue }
+            lastLiveTranscript = trimmed
+            hudContinuation.yield(.recording(partialText: trimmed))
         }
     }
 
     private func runSegmentLoop() async {
         for await segment in pipeline.segments {
-            isRecording = false
-            cancelPartialTask()
+            guard isMicOpen else { continue }
+            stopCurrentUtterance()
             log.log("segment received: duration=\(segment.duration), silenceBefore=\(segment.silenceBefore), trailingSilenceAfter=\(segment.trailingSilenceAfter), endedBySilence=\(segment.endedBySilence)", category: .session)
-            hudContinuation.yield(.transcribing)
+            hudContinuation.yield(.transcribing(lastText: lastLiveTranscript))
             let result = await transcriber.transcribe(segment)
             log.log("transcription: chars=\(result.text.count) confidence=\(result.confidence)", category: .session)
             let intent = resolver.resolve(result)
             log.log("resolved intent: \(intent)", category: .session)
             dispatch(intent, result: result)
-            if isRecording == false {
-                isRecording = true
-                resetPartialTracking()
-                hudContinuation.yield(.recording())
-            }
+            if isMicOpen { beginListeningCycle() }
         }
     }
 
     private func dispatch(_ intent: Intent, result: TranscriptionResult) {
+        let continueListening = isMicOpen
         switch intent {
         case .inject(let text):
-            log.log("dispatch: inject chars=\(text.count)", category: .session)
-            switch output.append(text) {
+            let normalized = textNormalizer.normalizeForInjection(text)
+            guard !normalized.isEmpty else {
+                log.log("dispatch: inject normalized to empty text, dropping utterance", category: .session)
+                hudContinuation.yield(continueListening ? .listening : .idle)
+                return
+            }
+            log.log("dispatch: inject chars=\(normalized.count)", category: .session)
+            switch output.append(normalized) {
             case .success:
                 log.log("dispatch: append handed to output manager", category: .session)
-                hudContinuation.yield(.injected(text))
+                hudContinuation.yield(.injected(normalized, continueListening: continueListening))
             case .failure(let message):
                 log.error("dispatch: append failed: \(message)", category: .session)
-                hudContinuation.yield(.error(message))
+                hudContinuation.yield(.error(message, continueListening: continueListening))
             }
         case .command(.roger):
             log.log("dispatch: ROGER → send (confidence=\(result.confidence))", category: .session)
             switch output.send() {
             case .success:
-                hudContinuation.yield(.injected("⏎"))
+                hudContinuation.yield(.injected("⏎", continueListening: continueListening))
             case .failure(let message):
                 log.error("dispatch: send failed: \(message)", category: .session)
-                hudContinuation.yield(.error(message))
+                hudContinuation.yield(.error(message, continueListening: continueListening))
             }
         case .command(.abort):
             log.log("dispatch: ABORT → clear (confidence=\(result.confidence))", category: .session)
             switch output.clear() {
             case .success:
-                hudContinuation.yield(.cleared)
+                hudContinuation.yield(.cleared(continueListening: continueListening))
             case .failure(let message):
                 log.error("dispatch: clear failed: \(message)", category: .session)
-                hudContinuation.yield(.error(message))
+                hudContinuation.yield(.error(message, continueListening: continueListening))
             }
         case .discard:
             log.log("dispatch: discard chars=\(result.text.count) confidence=\(result.confidence)", category: .session)
-            hudContinuation.yield(.idle)
+            hudContinuation.yield(continueListening ? .listening : .idle)
         }
     }
 
-    private func resetPartialTracking() {
-        cancelPartialTask()
+    private func beginListeningCycle() {
+        acceptsPartialUpdates = true
+        lastLiveTranscript = nil
+        pendingSnapshot = nil
     }
 
-    private func cancelPartialTask() {
+    private func stopCurrentUtterance() {
+        acceptsPartialUpdates = false
+        pendingSnapshot = nil
         partialTask?.cancel()
+        partialTask = nil
+    }
+
+    private func ensurePartialWorker() {
+        guard partialTask == nil else { return }
+        partialTask = Task {
+            await self.runPartialWorkerLoop()
+        }
+    }
+
+    private func runPartialWorkerLoop() async {
+        while !Task.isCancelled {
+            guard let snapshot = pendingSnapshot else {
+                partialTask = nil
+                return
+            }
+            pendingSnapshot = nil
+            _ = await transcriber.transcribePartial(snapshot)
+        }
         partialTask = nil
     }
 }

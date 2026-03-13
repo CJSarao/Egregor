@@ -247,6 +247,31 @@ final class SessionControllerIntegrationTests: XCTestCase {
         XCTAssertEqual(output.appended, ["ls -la"])
     }
 
+    func testNormalUtteranceStripsTrailingPunctuationBeforeAppend() async throws {
+        let output = MockOutputManager()
+        let exp = expectation(description: "append called with normalized text")
+        output.onAppend = { _ in exp.fulfill() }
+
+        let hotkeys = MockHotkeyManager()
+        let pipeline = MockAudioPipeline()
+        let txr = MockTranscriber(makeTranscriptionResult(text: "git status."))
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
+        await ctrl.start()
+
+        hotkeys.emit(.toggle)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        await pipeline.emitSegment(makeSpeechSegment())
+
+        await fulfillment(of: [exp], timeout: 2)
+        XCTAssertEqual(output.appended, ["git status"])
+    }
+
     // MARK: Isolated ROGER → send
 
     func testIsolatedRogerCallsSend() async throws {

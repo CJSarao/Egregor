@@ -7,7 +7,9 @@ struct EgregoreIntentResolver: IntentResolver {
     func resolve(_ result: TranscriptionResult) -> Intent {
         guard result.confidence >= Self.confidenceFloor else { return .discard }
 
-        let normalized = result.text.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let normalized = result.text
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+            .uppercased()
 
         if looksLikeStandaloneCommand(result.segment), let cmd = vocabularyCommand(for: normalized) {
             return .command(cmd)

@@ -133,33 +133,34 @@
 - deps: Task 11, Task 12
 - passes: true
 - ac:
-  - While an utterance is actively being captured, the HUD shows incrementally updated transcript text with low enough latency to provide immediate user feedback
-  - A completed utterance detected by silence finalizes the transcript, dismisses the HUD transcript state, and injects the finalized text into the focused terminal session
+  - While an utterance is actively being captured, the HUD moves from `Listening` into incrementally updated transcript text with low enough latency to provide immediate user feedback
+  - A completed utterance detected by silence keeps the most recent transcript visible while finalizing, then injects the finalized text into the focused terminal session
 - verify: swift test --filter HUDStateTests && manual check of one utterance from live HUD transcript through final terminal injection
 
 ## Task 15
 - desc: Replace snapshot-final HUD updates with true incremental partial transcription that stays visible long enough to be perceptible during live capture
 - deps: Task 5, Task 8, Task 9, Task 14
-- passes: false
+- passes: true
 - ac:
   - During an active utterance, the HUD updates from WhisperKit callback partials rather than waiting for a completed snapshot decode result
   - Partial transcript updates are frequent and stable enough to be visually perceived before final injection occurs
-  - Final transcript completion still clears the live partial state and transitions cleanly into transcribing/injected behavior without stale partial flashes
+  - Final transcript completion keeps the latest visible text stable and transitions cleanly into transcribing/injected behavior without stale partial flashes or immediate HUD bounce
 - verify: swift test --filter HUDStateTests && manual check that a multi-word utterance visibly updates in place while speaking
 
 ## Task 16
 - desc: Make spoken ROGER and ABORT resolve to commands reliably in real use instead of falling through to normal text injection
 - deps: Task 4, Task 6, Task 8, Task 12
-- passes: false
+- passes: true
 - ac:
   - Naturally spoken standalone `ROGER` and `ABORT` trigger send and clear outcomes reliably enough for treadmill use without requiring brittle silence timing that commonly misclassifies them as dictation
   - Normal dictation containing command words in longer phrases still injects as text unless the utterance satisfies the intended command criteria
+  - Final dictation headed to terminal injection strips trailing spoken punctuation so commands do not arrive as `git status.` when the user intended `git status`
 - verify: swift test --filter IntentResolverTests && swift test --filter SessionControllerIntegrationTests && manual check that standalone spoken `ROGER` and `ABORT` do not append to the terminal
 
 ## Task 17
 - desc: Add higher-confidence integration proof for live partial HUD behavior and real command execution so mocked tests cannot mask regressions
 - deps: Task 12, Task 15, Task 16
-- passes: false
+- passes: true
 - ac:
   - Automated tests prove that partial transcription callbacks can reach the HUD as multiple visible updates during a single utterance
   - Automated or harnessed integration proof verifies that `ROGER` and `ABORT` execute send and clear behavior through the real output path instead of merely resolving to mocked command intents

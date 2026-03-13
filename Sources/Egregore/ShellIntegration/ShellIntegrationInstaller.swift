@@ -89,7 +89,7 @@ struct ShellIntegrationInstaller {
                 _egregore_mark_prompt_ready
                 zle -R
                 _egregore_debug "send applied buffer_len=${#BUFFER} buffer<<<$BUFFER>>> cursor=$CURSOR"
-                zle accept-line
+                zle -U $'\n'
                 ;;
             *)
                 _egregore_debug "unknown pending action=${EGREGORE_PENDING_ACTION:-<empty>}"

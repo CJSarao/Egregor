@@ -87,10 +87,10 @@ Only WhisperKit is currently declared as a third-party dependency. Any additiona
 Single mode: toggle mic on/off with a dedicated hotkey.
 
 ### Toggle (Open Mic)
-- Tap toggle key → mic records, VAD runs continuously, HUD shows a live transcript for the current utterance
-- When silence ends the utterance, finalize the transcript, hide the live transcript state, and inject the finalized text into the active terminal buffer
+- Tap toggle key → mic records, VAD runs continuously, HUD shows `Listening` before speech begins, then replaces it with a live transcript for the current utterance as partials arrive
+- When silence ends the utterance, finalize the transcript, keep the most recent transcript visible while finalizing, then inject the finalized text into the active terminal buffer
 - Isolated command words trigger command parsing (see isolation algorithm below)
-- Normal utterances append to terminal buffer — ABORT is the only way to clear
+- Normal utterances append to terminal buffer after trailing terminal-recitation punctuation is stripped from the end of the utterance (`.`, `,`, `;`, `:`, `!`, `?`) — ABORT is the only way to clear
 - Tap toggle key again → mic stops, HUD shows idle
 
 ### Default Hotkey
@@ -251,10 +251,10 @@ The only module that knows all others. It translates runtime events into output 
 toggle → start recording
   pipeline: transcribe -> resolve
   outcomes:
-  - .inject(t) -> output.append(t), auto-restart recording
-  - .command(.roger) -> output.send(), auto-restart recording
-  - .command(.abort) -> output.clear(), auto-restart recording
-  - .discard -> no-op, auto-restart recording
+  - .inject(t) -> normalize trailing terminal punctuation, output.append(t), return HUD to listening after a short final-state dwell
+  - .command(.roger) -> output.send(), return HUD to listening after a short final-state dwell
+  - .command(.abort) -> output.clear(), return HUD to listening after a short final-state dwell
+  - .discard -> no-op, remain in listening state while mic stays open
 
 toggle → stop recording
   pipeline.stop(), HUD idle
@@ -267,11 +267,12 @@ toggle → stop recording
 Pure observer of `SessionController` state. No interface — subscribes to published state:
 
 ```
+.listening    → show mic-open idle state before speech begins
 .recording    → show live partial transcription text for the current utterance
-.transcribing → show activity indicator
-.injected     → fade out (text now in terminal)
-.cleared      → dismiss immediately
-.error        → show a short visible failure message, then dismiss
+.transcribing → keep the most recent transcript visible while finalizing when available; otherwise show activity indicator
+.injected     → show submitted text briefly, then return to `.listening` if the mic is still open
+.cleared      → show a short cleared state, then return to `.listening` if the mic is still open
+.error        → show a short visible failure message, then return to `.listening` if the mic is still open
 .idle         → hidden
 ```
 
@@ -350,7 +351,7 @@ _egregore_apply_pending() {
         send)
             _egregore_mark_prompt_ready
             zle -R
-            zle accept-line
+            zle -U $'\n'
             ;;
         *)
             _egregore_debug "unknown pending action=${EGREGORE_PENDING_ACTION:-<empty>}"
@@ -394,6 +395,8 @@ add-zle-hook-widget line-init _egregore_mark_prompt_ready
 3. Read pipe path plus prompt/focus metadata from `~/.config/egregore/sessions/{pid}`
 4. Rank candidates by prompt/focus readiness before timestamp fallback
 5. Write `inject|{text}\n`, `clear|\n`, or `send|\n` to pipe
+
+This architecture targets the focused `zsh` line editor, not arbitrary child processes that currently own the terminal. When a full-screen CLI tool such as Codex or Claude Code has taken over the foreground TTY, Egregore can still target the underlying shell buffer but does not yet inject directly into the running child process.
 
 ### Install Flow
 

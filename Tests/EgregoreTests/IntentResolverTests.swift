@@ -64,8 +64,18 @@ final class IntentResolverTests: XCTestCase {
         XCTAssertEqual(resolver.resolve(result), .command(.roger))
     }
 
+    func testIsolatedRogerWithTrailingPunctuationReturnsCommand() {
+        let result = makeResult(text: "ROGER.", silenceBefore: .milliseconds(2000), duration: .milliseconds(800))
+        XCTAssertEqual(resolver.resolve(result), .command(.roger))
+    }
+
     func testIsolatedAbortReturnsCommand() {
         let result = makeResult(text: "ABORT", silenceBefore: .milliseconds(2000), duration: .milliseconds(800))
+        XCTAssertEqual(resolver.resolve(result), .command(.abort))
+    }
+
+    func testIsolatedAbortWithTrailingPunctuationReturnsCommand() {
+        let result = makeResult(text: "ABORT!", silenceBefore: .milliseconds(2000), duration: .milliseconds(800))
         XCTAssertEqual(resolver.resolve(result), .command(.abort))
     }
 
@@ -142,6 +152,25 @@ final class IntentResolverTests: XCTestCase {
     func testConfidenceJustBelowFloorIsDiscarded() {
         let result = makeResult(text: "git status", confidence: 0.29)
         XCTAssertEqual(resolver.resolve(result), .discard)
+    }
+}
+
+final class TerminalTextNormalizerTests: XCTestCase {
+    private let normalizer = TerminalTextNormalizer()
+
+    func testStripsTrailingCommandPunctuation() {
+        XCTAssertEqual(normalizer.normalizeForInjection("git status."), "git status")
+        XCTAssertEqual(normalizer.normalizeForInjection("npm run build!"), "npm run build")
+        XCTAssertEqual(normalizer.normalizeForInjection("ls -la;"), "ls -la")
+    }
+
+    func testKeepsInternalPunctuation() {
+        XCTAssertEqual(normalizer.normalizeForInjection("say hello, world"), "say hello, world")
+        XCTAssertEqual(normalizer.normalizeForInjection("git commit -m fix: tests"), "git commit -m fix: tests")
+    }
+
+    func testTrimsWhitespaceWhileNormalizing() {
+        XCTAssertEqual(normalizer.normalizeForInjection("  git status.  "), "git status")
     }
 }
 
