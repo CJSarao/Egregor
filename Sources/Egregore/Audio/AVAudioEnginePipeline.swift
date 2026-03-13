@@ -175,7 +175,13 @@ actor AVAudioEnginePipeline: AudioPipeline {
                 callback(samples)
             }
             return TapHandle(
-                start: { try? engine.start() },
+                start: {
+                    do {
+                        try engine.start()
+                    } catch {
+                        RuntimeLogger.shared.error("AVAudioEngine start failed: \(error)", category: .general)
+                    }
+                },
                 stop:  { engine.stop(); input.removeTap(onBus: 0) }
             )
         }

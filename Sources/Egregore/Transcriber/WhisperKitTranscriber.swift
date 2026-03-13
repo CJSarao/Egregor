@@ -107,6 +107,11 @@ actor WhisperKitTranscriber: Transcriber {
         }
     }
 
+    nonisolated static func stripTokens(_ text: String) -> String {
+        text.replacingOccurrences(of: "<\\|[^|]*\\|>", with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     // exp(mean_avgLogprob) maps log-prob domain to [0,1]: log(1)=0→confidence 1.0, lower log-probs→lower confidence
     static func confidence(from avgLogprobs: [Float]) -> Float {
         guard !avgLogprobs.isEmpty else { return 0 }
@@ -134,7 +139,7 @@ actor WhisperKitTranscriber: Transcriber {
             let results = try await kit.transcribe(
                 audioArray: audioArray,
                 callback: { progress in
-                    let partial = progress.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let partial = WhisperKitTranscriber.stripTokens(progress.text)
                     if !partial.isEmpty { onPartial(partial) }
                     return nil
                 }

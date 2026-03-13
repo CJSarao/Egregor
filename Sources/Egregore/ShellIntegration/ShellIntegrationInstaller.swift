@@ -83,13 +83,21 @@ struct ShellIntegrationInstaller {
                 CURSOR=0
                 _egregore_mark_prompt_ready
                 zle -R
-                _egregore_debug "clear applied after_len=${#BUFFER} after_buffer<<<$BUFFER>>> after_cursor=$CURSOR"
+                _egregore_debug "clear applied"
                 ;;
             send)
+                local cmd="$BUFFER"
+                _egregore_debug "send firing buffer_len=${#BUFFER} buffer<<<$cmd>>>"
+                [[ -z "$cmd" ]] && { _egregore_debug "send: empty buffer, skipping"; return 0; }
+                print -s -- "$cmd"
+                BUFFER=""
+                CURSOR=0
+                _egregore_mark_busy
+                zle -I
+                eval "$cmd"
                 _egregore_mark_prompt_ready
-                zle -R
-                _egregore_debug "send applied buffer_len=${#BUFFER} buffer<<<$BUFFER>>> cursor=$CURSOR"
-                zle -U $'\n'
+                zle reset-prompt
+                _egregore_debug "send eval completed"
                 ;;
             *)
                 _egregore_debug "unknown pending action=${EGREGORE_PENDING_ACTION:-<empty>}"
@@ -99,9 +107,7 @@ struct ShellIntegrationInstaller {
 
     _egregore_inject() {
         local action text line
-        local before_buffer="$BUFFER"
-        local before_cursor="$CURSOR"
-        _egregore_debug "handler entry fd=$VOICE_FD before_len=${#before_buffer} before_buffer<<<$before_buffer>>> before_cursor=$before_cursor"
+        _egregore_debug "handler entry fd=$VOICE_FD buffer_len=${#BUFFER} buffer<<<$BUFFER>>> cursor=$CURSOR"
         IFS= read -r -t 1 line <&$VOICE_FD || {
             _egregore_debug "read failed fd=$VOICE_FD"
             return 0

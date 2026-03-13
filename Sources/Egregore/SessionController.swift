@@ -117,7 +117,7 @@ actor SessionController {
                 hudContinuation.yield(continueListening ? .listening : .idle)
                 return
             }
-            log.log("dispatch: inject chars=\(normalized.count)", category: .session)
+            log.log("dispatch: inject chars=\(normalized.count) text=<<<\(normalized)>>>", category: .session)
             switch output.append(normalized) {
             case .success:
                 log.log("dispatch: append handed to output manager", category: .session)
