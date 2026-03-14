@@ -70,6 +70,35 @@ Shell-side debug logging available via `EGREGORE_SHELL_DEBUG=1`.
 
 All modules are testable without audio hardware. Closure injection replaces real audio taps and WhisperKit engines with stubs. Tests cover resolver logic, output semantics, HUD state transitions, streaming partials, and mocked end-to-end flows.
 
+## egregore-read
+
+CLI tool that reads `.epub` files aloud using macOS text-to-speech. Audiobook-style playback for DRM-free ebooks.
+
+```bash
+swift build --product egregore-read
+.build/debug/egregore-read book.epub
+```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--chapter N` | Start from chapter N (1-based) |
+| `--page N` | Start from page N (requires page-list in epub) |
+| `--rate R` | Speech rate, 0.0–1.0 |
+| `--print` | Echo text to terminal as it's spoken |
+
+### Playback controls
+
+| Key | Action |
+|-----|--------|
+| `space` | Pause / resume |
+| `n` | Next chapter |
+| `p` | Previous chapter |
+| `q` | Quit |
+
+Uses Zoe Premium voice when available, falls back to system default. No external dependencies.
+
 ## Dependencies
 
 | Package | Purpose |
