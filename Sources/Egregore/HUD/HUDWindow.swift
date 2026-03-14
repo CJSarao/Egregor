@@ -12,8 +12,8 @@ final class HUDWindowController {
 
     // MARK: Internal
 
-    nonisolated static let width: CGFloat = 420
-    nonisolated static let height: CGFloat = 88
+    nonisolated static let width: CGFloat = 160
+    nonisolated static let height: CGFloat = 44
     nonisolated static let bottomMargin: CGFloat = 80
 
     nonisolated static func anchoredFrame(
@@ -114,7 +114,6 @@ final class HUDViewModel: ObservableObject {
 
     @Published var state: HUDState = .idle
     @Published var visible = false
-    @Published var partialText: String = ""
 
     // MARK: Private
 
@@ -124,12 +123,6 @@ final class HUDViewModel: ObservableObject {
 
     private func apply(_ newState: HUDState) {
         fadeTask?.cancel()
-        if case let .recording(text) = newState {
-            partialText = text
-            if case .recording = state {
-                return
-            }
-        }
         state = newState
 
         switch newState {
@@ -141,7 +134,7 @@ final class HUDViewModel: ObservableObject {
              .transcribing:
             visible = true
 
-        case let .injected(_, continueListening):
+        case let .injected(continueListening):
             visible = true
             fadeTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: Self.finalStateDwell)
@@ -196,16 +189,16 @@ struct HUDContentView: View {
     // MARK: Private
 
     private var hudBody: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             statusIcon
             statusText
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
         .frame(width: HUDWindowController.width, height: HUDWindowController.height, alignment: .leading)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(.white.opacity(0.1), lineWidth: 1)
         )
     }
@@ -213,12 +206,8 @@ struct HUDContentView: View {
     @ViewBuilder
     private var statusIcon: some View {
         switch viewModel.state {
-        case .listening:
-            Circle()
-                .fill(.red)
-                .frame(width: 10, height: 10)
-
-        case .recording:
+        case .listening,
+             .recording:
             Circle()
                 .fill(.red)
                 .frame(width: 10, height: 10)
@@ -245,67 +234,37 @@ struct HUDContentView: View {
         switch viewModel.state {
         case .listening:
             Text("Listening")
-                .font(.system(.body, design: .monospaced))
+                .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.primary)
 
         case .recording:
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Listening")
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                PartialTextView(text: viewModel.partialText)
-            }
-
-        case let .transcribing(lastText):
-            if let lastText, !lastText.isEmpty {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Finalizing")
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                    Text(lastText)
-                        .font(.system(.body, design: .monospaced))
-                        .foregroundStyle(.primary)
-                        .lineLimit(2)
-                }
-            } else {
-                Text("Transcribing…")
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
-
-        case let .injected(text, _):
-            Text(text)
-                .font(.system(.body, design: .monospaced))
+            Text("Recording")
+                .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.primary)
-                .lineLimit(1)
+
+        case .transcribing:
+            Text("Processing")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+
+        case .injected:
+            Text("Sent")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.primary)
 
         case .cleared:
             Text("Cleared")
-                .font(.system(.body, design: .monospaced))
+                .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.primary)
-                .lineLimit(1)
 
         case let .error(text, _):
             Text(text)
-                .font(.system(.body, design: .monospaced))
+                .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.primary)
-                .lineLimit(2)
+                .lineLimit(1)
 
         default:
             EmptyView()
         }
-    }
-}
-
-struct PartialTextView: View {
-    let text: String
-
-    var body: some View {
-        Text(text)
-            .font(.system(.body, design: .monospaced))
-            .foregroundStyle(.primary)
-            .lineLimit(2)
-            .contentTransition(.interpolate)
-            .animation(.easeInOut(duration: 0.15), value: text)
     }
 }

@@ -51,6 +51,7 @@ actor SessionController {
     private var acceptsPartialUpdates = false
     private var pendingSnapshot: SpeechCaptureSnapshot?
     private var lastLiveTranscript: String?
+    private var lastInjectedPartial: String = ""
     private var partialTask: Task<Void, Never>?
 
     private let hudContinuation: AsyncStream<HUDState>.Continuation
@@ -98,8 +99,10 @@ actor SessionController {
     }
 
     private func runPartialStreamLoop() async {
+        var emittedRecording = false
         for await text in transcriber.partialTextStream {
             guard isMicOpen, acceptsPartialUpdates else {
+                emittedRecording = false
                 continue
             }
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -107,7 +110,33 @@ actor SessionController {
                 continue
             }
             lastLiveTranscript = trimmed
-            hudContinuation.yield(.recording(partialText: trimmed))
+            let normalized = textNormalizer.normalizeForInjection(trimmed)
+            guard !normalized.isEmpty else {
+                continue
+            }
+            let previous = lastInjectedPartial
+            var result: OutputResult = .success
+            if normalized.hasPrefix(previous), !previous.isEmpty {
+                let delta = String(normalized.dropFirst(previous.count))
+                if !delta.isEmpty {
+                    result = output.append(delta)
+                }
+            } else {
+                if !previous.isEmpty {
+                    _ = output.clear()
+                }
+                result = output.append(normalized)
+            }
+            if case let .failure(message) = result {
+                log.error("partial append failed: \(message)", category: .session)
+                hudContinuation.yield(.error(message, continueListening: isMicOpen))
+                continue
+            }
+            lastInjectedPartial = normalized
+            if !emittedRecording {
+                hudContinuation.yield(.recording)
+                emittedRecording = true
+            }
         }
     }
 
@@ -121,7 +150,7 @@ actor SessionController {
                 "segment received: duration=\(segment.duration), silenceBefore=\(segment.silenceBefore), trailingSilenceAfter=\(segment.trailingSilenceAfter), endedBySilence=\(segment.endedBySilence)",
                 category: .session
             )
-            hudContinuation.yield(.transcribing(lastText: lastLiveTranscript))
+            hudContinuation.yield(.transcribing)
             let result = await transcriber.transcribe(segment)
             log.log("transcription: chars=\(result.text.count) confidence=\(result.confidence)", category: .session)
             let intent = resolver.resolve(result)
@@ -143,22 +172,14 @@ actor SessionController {
                 hudContinuation.yield(continueListening ? .listening : .idle)
                 return
             }
-            log.log("dispatch: inject chars=\(normalized.count) text=<<<\(normalized)>>>", category: .session)
-            switch output.append(normalized) {
-            case .success:
-                log.log("dispatch: append handed to output manager", category: .session)
-                hudContinuation.yield(.injected(normalized, continueListening: continueListening))
-
-            case let .failure(message):
-                log.error("dispatch: append failed: \(message)", category: .session)
-                hudContinuation.yield(.error(message, continueListening: continueListening))
-            }
+            log.log("dispatch: inject chars=\(normalized.count) (partials already placed text)", category: .session)
+            hudContinuation.yield(.injected(continueListening: continueListening))
 
         case .command(.roger):
             log.log("dispatch: ROGER → send (confidence=\(result.confidence))", category: .session)
             switch output.send() {
             case .success:
-                hudContinuation.yield(.injected("⏎", continueListening: continueListening))
+                hudContinuation.yield(.injected(continueListening: continueListening))
             case let .failure(message):
                 log.error("dispatch: send failed: \(message)", category: .session)
                 hudContinuation.yield(.error(message, continueListening: continueListening))
@@ -176,6 +197,10 @@ actor SessionController {
 
         case .discard:
             log.log("dispatch: discard chars=\(result.text.count) confidence=\(result.confidence)", category: .session)
+            if !lastInjectedPartial.isEmpty {
+                _ = output.clear()
+                log.log("dispatch: cleared partial text from terminal", category: .session)
+            }
             hudContinuation.yield(continueListening ? .listening : .idle)
         }
     }
@@ -183,11 +208,13 @@ actor SessionController {
     private func beginListeningCycle() {
         acceptsPartialUpdates = true
         lastLiveTranscript = nil
+        lastInjectedPartial = ""
         pendingSnapshot = nil
     }
 
     private func stopCurrentUtterance() {
         acceptsPartialUpdates = false
+        lastInjectedPartial = ""
         pendingSnapshot = nil
         partialTask?.cancel()
         partialTask = nil

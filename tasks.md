@@ -24,7 +24,7 @@
 - deps: Task 1, Task 2
 - passes: true
 - ac:
-  - OutputManager resolves the frontmost application, ranks registered shell sessions by prompt/focus readiness before recency, and writes to the best candidate pipe without exposing process-tree or pipe details to callers
+  - OutputManager resolves the frontmost application, ranks registered shell sessions by prompt/focus readiness before recency, and prefers writing to the best candidate pipe while falling back to synthetic terminal key events when prompt readiness cannot be confirmed
   - append writes inject messages that preserve space-separated buffer concatenation semantics across repeated calls
   - clear resets the buffer and send submits the existing shell buffer without re-injecting text
 - verify: swift test --filter OutputManagerTests
@@ -112,9 +112,9 @@
 - deps: Task 11
 - passes: true
 - ac:
-  - Final transcriptions either append to the active terminal buffer or emit logs showing exactly where resolution failed
+  - Final transcriptions either append to the active terminal buffer through the shell pipe, fall back to synthetic terminal key events when prompt readiness is unavailable, or emit logs showing exactly where resolution failed
   - Session discovery logs include the frontmost app PID, shell PID traversal, matched registry PID ancestry, and prompt/focus metadata used for candidate ranking without exposing implementation details to callers
-  - ROGER and ABORT attempts log whether the app executed send or clear and whether shell targeting was applied, refused as ambiguous, or failed in delivery
+  - ROGER and ABORT attempts log whether the app executed send or clear and whether shell targeting used the pipe path, fell back to synthetic key events, was refused as ambiguous, or failed in delivery
   - The managed zsh snippet supports an opt-in debug log that proves handler entry and post-mutation buffer state during manual debugging
 - verify: swift test --filter ShellIntegrationInstallerTests && manual check in a fresh zsh terminal after installing the managed snippet, with logs confirming append and clear paths
 
@@ -166,3 +166,73 @@
   - Automated or harnessed integration proof verifies that `ROGER` and `ABORT` execute send and clear behavior through the real output path instead of merely resolving to mocked command intents
   - The proof surfaces timing-sensitive regressions that the current mocked snapshot and resolver tests do not catch
 - verify: swift test && manual check of one live partial-transcript utterance plus one live `ROGER` and one live `ABORT` command against a fresh zsh session
+
+## Task 18
+- desc: Add interpreted-command mode selection and hotkey routing alongside the existing literal dictation mode
+- deps: Task 13
+- passes: false
+- ac:
+  - The app exposes two distinct toggle events: literal dictation on `Right Control` tap and interpreted command mode on `Right Control` + `Shift` tap
+  - Session state tracks the active voice mode and preserves the existing literal-mode behavior unchanged
+  - The HUD and menu bar can show which mode is currently active in user-facing language
+- verify: swift test --filter HotkeyManagerTests && swift test --filter HUDStateTests
+
+## Task 19
+- desc: Add shell-buffer replacement semantics to OutputManager for interpreted command mode
+- deps: Task 3
+- passes: false
+- ac:
+  - OutputManager exposes a replace-buffer operation that replaces the current shell buffer rather than appending
+  - Prompt-ready shells replace through the managed shell pipe, while non-prompt-ready fallback targets replace through synthetic clear-plus-type behavior
+  - Replace operations preserve existing `append`, `send`, and `clear` semantics for literal mode and command words
+- verify: swift test --filter OutputManagerTests
+
+## Task 20
+- desc: Add a command interpreter module boundary and wire interpreted mode through SessionController
+- deps: Task 18, Task 19
+- passes: false
+- ac:
+  - Every finalized non-command utterance in interpreted mode is sent through a CommandInterpreter before mutating the terminal buffer
+  - `ROGER` and `ABORT` bypass the interpreter and retain their existing send and clear behavior in both modes
+  - Successful interpreted results replace the shell buffer, and interpreter failures surface as explicit HUD/runtime errors without silently degrading to literal append behavior
+- verify: swift test --filter SessionControllerIntegrationTests
+
+## Task 21
+- desc: Implement the OpenAI-backed command interpreter using Responses API, gpt-5-mini, and strict single-line output validation
+- deps: Task 20
+- passes: false
+- ac:
+  - The interpreter sends finalized transcripts to OpenAI Responses API with stateless requests and parses a structured normalization result
+  - Valid interpreter outputs are restricted to one single-line shell command with no markdown or assistant-style prose wrappers
+  - Invalid, empty, or multiline model outputs are rejected with explicit errors rather than injected into the shell buffer
+- verify: swift test --filter CommandInterpreterTests
+
+## Task 22
+- desc: Add macOS Keychain-backed API key storage and interpreted-mode configuration state in the app UI
+- deps: Task 21
+- passes: false
+- ac:
+  - The menu bar UI can save or update an OpenAI API key in Keychain and report whether interpreted mode is configured
+  - The app never displays the raw stored API key after save
+  - Missing or invalid credentials produce visible guidance and runtime diagnostics instead of a crash
+- verify: swift test --filter AppRuntimeTests && manual check that setting a key enables interpreted mode availability in the menu bar
+
+## Task 23
+- desc: Give interpreted command mode its own HUD behavior without live partial transcript rendering
+- deps: Task 18, Task 20
+- passes: false
+- ac:
+  - Interpreted command mode shows a distinct active-mode state from literal dictation mode
+  - Interpreted command processing shows concise listening, interpreting, success, and error transitions without relying on live partial text
+  - Toggling between modes does not leak stale literal partial transcript UI into interpreted-mode states
+- verify: swift test --filter HUDStateTests
+
+## Task 24
+- desc: Add proof-oriented tests for interpreted command mode without requiring live network access
+- deps: Task 20, Task 21, Task 23
+- passes: false
+- ac:
+  - Automated tests prove interpreted-mode utterances call the interpreter, validate the response, and replace the shell buffer on success
+  - Automated tests prove interpreter bypass for `ROGER` and `ABORT` and rejection of multiline or chatty model outputs
+  - The proof runs in CI without microphone hardware, live OpenAI credentials, or network access
+- verify: swift test

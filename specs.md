@@ -84,7 +84,11 @@ Only WhisperKit is currently declared as a third-party dependency. Any additiona
 
 ## 5. Mode System
 
-Single mode: toggle mic on/off with a dedicated hotkey.
+Two modes: `Literal Dictation` and `Interpreted Command`.
+
+`Literal Dictation` remains the default voice path documented in this file.
+`Interpreted Command` is an additional voice path for shell-command normalization and is specified in detail in [command-mode-spec.md](/Users/christopher/projects/egregore/command-mode-spec.md).
+Both modes are first-class product behavior and part of the source of truth.
 
 ### Toggle (Open Mic)
 - Tap toggle key → mic records, VAD runs continuously, HUD shows `Listening` before speech begins, then replaces it with a live transcript for the current utterance as partials arrive
@@ -98,6 +102,7 @@ Single mode: toggle mic on/off with a dedicated hotkey.
 | Action | Key | Mechanism |
 |---|---|---|
 | Toggle mic on/off | `Right Control (^)` tap | `NSEvent flagsChanged` |
+| Toggle interpreted command mode on/off | `Right Control (^)` + `Shift` tap | `NSEvent flagsChanged` |
 
 Right-side modifier key only. No conflicts with terminal control sequences, common IDE shortcuts, or macOS system shortcuts. Comfortable to reach without looking — suitable for treadmill use.
 
@@ -109,8 +114,8 @@ Minimal, opinionated. Military-style to prevent false positives in normal speech
 
 | Command | Word | Action |
 |---|---|---|
-| Send | `ROGER` | Submit the focused shell's current ZLE buffer through the shell pipe. Does NOT re-inject text — text already present from prior injection. |
-| Clear | `ABORT` | Clear ZLE BUFFER in focused terminal + clear HUD. |
+| Send | `ROGER` | Submit the focused shell's current ZLE buffer through the shell pipe when the shell is prompt-ready; otherwise fall back to a synthetic Return key event against the focused terminal. Does NOT re-inject text. |
+| Clear | `ABORT` | Clear ZLE BUFFER in the focused terminal through the shell pipe when prompt-ready; otherwise fall back to a synthetic Ctrl+U key event. |
 
 Vocabulary is fixed. No user configuration.
 
@@ -228,18 +233,20 @@ Hides: isolation timing algorithm, all threshold constants, vocabulary matching,
 ```swift
 protocol OutputManager {
     func append(_ text: String)  // ZLE BUFFER += text, cursor at end
-    func send()                  // accept current ZLE buffer via shell pipe
+    func send()                  // accept current ZLE buffer
     func clear()                 // ZLE BUFFER = ""
 }
 ```
 
-Hides: session registry lookup, focus/prompt-aware shell ranking, process tree walking, pipe path resolution, ZLE wire protocol, shell pipe I/O. Three operations, no implementation details exposed.
+Hides: session registry lookup, focus/prompt-aware shell ranking, process tree walking, pipe path resolution, ZLE wire protocol, shell pipe I/O, and synthetic keyboard-event fallback details. Three operations, no implementation details exposed.
 
 `SessionController` always sequences these operations. They are never chained inside `OutputManager`.
 
 Each `append` call concatenates to the existing ZLE buffer (space-separated). `clear` resets to empty. This is the only mutation model — there is no replace operation.
 
-When session discovery or pipe delivery fails, `OutputManager` must emit explicit diagnostics identifying the frontmost app, candidate shell PID ancestry, resolved pipe path, focus/prompt ranking when multiple shells are present, and whether the failure was lookup, stale registry, open, write, or ambiguity refusal.
+Preferred behavior is shell-pipe delivery when the resolved zsh session is explicitly marked prompt-ready. If Egregore can resolve the focused terminal lineage but cannot confirm a prompt-ready shell, `OutputManager` falls back to synthetic key events against the focused terminal: typed text for `append`, `Ctrl+U` for `clear`, and `Return` for `send`.
+
+When session discovery, pipe delivery, or fallback event synthesis fails, `OutputManager` must emit explicit diagnostics identifying the frontmost app, candidate shell PID ancestry, resolved pipe path, focus/prompt ranking when multiple shells are present, whether pipe delivery was attempted, whether fallback was used, and whether the failure was lookup, stale registry, open, write, ambiguity refusal, or event-post failure.
 
 ---
 
@@ -394,7 +401,8 @@ add-zle-hook-widget line-init _egregore_mark_prompt_ready
 2. Walk process tree to find shell child with a registered session file
 3. Read pipe path plus prompt/focus metadata from `~/.config/egregore/sessions/{pid}`
 4. Rank candidates by prompt/focus readiness before timestamp fallback
-5. Write `inject|{text}\n`, `clear|\n`, or `send|\n` to pipe
+5. If the selected shell is prompt-ready, write `inject|{text}\n`, `clear|\n`, or `send|\n` to pipe
+6. If the focused terminal lineage resolves but prompt readiness is not confirmed, fall back to synthetic key events (`text`, `Ctrl+U`, `Return`) against the frontmost terminal app
 
 This architecture targets the focused `zsh` line editor, not arbitrary child processes that currently own the terminal. When a full-screen CLI tool such as Codex or Claude Code has taken over the foreground TTY, Egregore can still target the underlying shell buffer but does not yet inject directly into the running child process.
 
@@ -432,8 +440,9 @@ Tests are **proof that the implementation satisfies the spec**. They are the pri
 - `IntentResolver`: for any transcription matching vocabulary text, with `duration < 2000ms` and `endedBySilence == true`, `resolve()` always returns `.command(_)` — never `.inject`, never `.discard`
 - `IntentResolver`: for any non-vocabulary text regardless of timing, `resolve()` never returns `.command(_)`
 - `IntentResolver`: for any transcription with confidence below threshold, `resolve()` always returns `.discard`
-- `OutputManager` (mocked pipe): any sequence of `append` calls followed by `clear` always ends with a final `clear|` message regardless of text content, length, or unicode composition
-- `OutputManager` (mocked pipe): multiple `append` calls always produce ordered `inject|...` messages in pipe write order
+- `OutputManager` (mocked pipe): any sequence of `append` calls followed by `clear` always ends with a final `clear|` message regardless of text content, length, or unicode composition when pipe delivery is used
+- `OutputManager` (mocked pipe): multiple `append` calls always produce ordered `inject|...` messages in pipe write order when pipe delivery is used
+- `OutputManager` fallback path: when prompt readiness is unavailable but a focused terminal target exists, `append`, `clear`, and `send` fall back to synthetic keyboard events with the correct semantics
 - PTY-backed interactive `zsh` shell proof is deferred; current automated proof stops at mocked pipes plus shell-snippet installer coverage
 
 **End-to-end tests** for the pipeline (no hardware required — all inputs mocked):

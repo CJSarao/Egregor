@@ -179,9 +179,9 @@ private func makeTranscriptionResult(
 final class SessionControllerIntegrationTests: XCTestCase {
     // MARK: Toggle on → dictation inject
 
-    func testToggleOnDictationAppendsTranscribedText() async throws {
+    func testToggleOnDictationPartialsPlaceText() async throws {
         let output = MockOutputManager()
-        let exp = expectation(description: "append called")
+        let exp = expectation(description: "append called via partial")
         output.onAppend = { _ in exp.fulfill() }
 
         let hotkeys = MockHotkeyManager()
@@ -198,7 +198,7 @@ final class SessionControllerIntegrationTests: XCTestCase {
 
         hotkeys.emit(.toggle)
         try await Task.sleep(nanoseconds: 30_000_000)
-        await pipeline.emitSegment(makeSpeechSegment())
+        txr.emitPartial("git status")
 
         await fulfillment(of: [exp], timeout: 2)
         XCTAssertEqual(output.appended, ["git status"])
@@ -285,9 +285,9 @@ final class SessionControllerIntegrationTests: XCTestCase {
 
     // MARK: Normal utterance appends text
 
-    func testNormalUtteranceAppends() async throws {
+    func testNormalUtterancePartialsAppend() async throws {
         let output = MockOutputManager()
-        let exp = expectation(description: "append called")
+        let exp = expectation(description: "append called via partial")
         output.onAppend = { _ in exp.fulfill() }
 
         let hotkeys = MockHotkeyManager()
@@ -310,18 +310,13 @@ final class SessionControllerIntegrationTests: XCTestCase {
 
         hotkeys.emit(.toggle)
         try await Task.sleep(nanoseconds: 30_000_000)
-        await pipeline.emitSegment(makeSpeechSegment(
-            silenceBefore: .milliseconds(200),
-            duration: .milliseconds(800),
-            trailingSilenceAfter: .milliseconds(900),
-            endedBySilence: true
-        ))
+        txr.emitPartial("ls -la")
 
         await fulfillment(of: [exp], timeout: 2)
         XCTAssertEqual(output.appended, ["ls -la"])
     }
 
-    func testNormalUtteranceStripsTrailingPunctuationBeforeAppend() async throws {
+    func testPartialNormalizesTrailingPunctuation() async throws {
         let output = MockOutputManager()
         let exp = expectation(description: "append called with normalized text")
         output.onAppend = { _ in exp.fulfill() }
@@ -340,7 +335,7 @@ final class SessionControllerIntegrationTests: XCTestCase {
 
         hotkeys.emit(.toggle)
         try await Task.sleep(nanoseconds: 30_000_000)
-        await pipeline.emitSegment(makeSpeechSegment())
+        txr.emitPartial("git status.")
 
         await fulfillment(of: [exp], timeout: 2)
         XCTAssertEqual(output.appended, ["git status"])
@@ -543,9 +538,9 @@ final class SessionControllerIntegrationTests: XCTestCase {
 
     // MARK: ROGER in a phrase injects as text, not command
 
-    func testRogerInPhraseInjectsAsText() async throws {
+    func testRogerInPhraseInjectsAsTextViaPartials() async throws {
         let output = MockOutputManager()
-        let exp = expectation(description: "append called for ROGER phrase")
+        let exp = expectation(description: "append called for ROGER phrase via partial")
         output.onAppend = { _ in exp.fulfill() }
 
         let hotkeys = MockHotkeyManager()
@@ -568,12 +563,7 @@ final class SessionControllerIntegrationTests: XCTestCase {
 
         hotkeys.emit(.toggle)
         try await Task.sleep(nanoseconds: 30_000_000)
-        await pipeline.emitSegment(makeSpeechSegment(
-            silenceBefore: .milliseconds(200),
-            duration: .milliseconds(2500),
-            trailingSilenceAfter: .milliseconds(900),
-            endedBySilence: true
-        ))
+        txr.emitPartial("ROGER that")
 
         await fulfillment(of: [exp], timeout: 2)
         XCTAssertEqual(output.appended, ["ROGER that"])

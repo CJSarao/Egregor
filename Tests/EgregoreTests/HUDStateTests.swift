@@ -55,8 +55,8 @@ final class HUDStateTests: XCTestCase {
         let states = await stateTask.value
         XCTAssertGreaterThanOrEqual(states.count, 3)
         XCTAssertEqual(states[0], .listening)
-        XCTAssertEqual(states[1], .transcribing())
-        XCTAssertEqual(states[2], .injected("git status", continueListening: true))
+        XCTAssertEqual(states[1], .transcribing)
+        XCTAssertEqual(states[2], .injected(continueListening: true))
     }
 
     // MARK: - Discard emits idle then recording (auto-restart)
@@ -86,7 +86,7 @@ final class HUDStateTests: XCTestCase {
         let states = await stateTask.value
         XCTAssertGreaterThanOrEqual(states.count, 3)
         XCTAssertEqual(states[0], .listening)
-        XCTAssertEqual(states[1], .transcribing())
+        XCTAssertEqual(states[1], .transcribing)
         XCTAssertEqual(states[2], .listening)
     }
 
@@ -154,8 +154,8 @@ final class HUDStateTests: XCTestCase {
         let states = await stateTask.value
         XCTAssertGreaterThanOrEqual(states.count, 3)
         XCTAssertEqual(states[0], .listening)
-        XCTAssertEqual(states[1], .transcribing())
-        XCTAssertEqual(states[2], .injected("ls -la", continueListening: true))
+        XCTAssertEqual(states[1], .transcribing)
+        XCTAssertEqual(states[2], .injected(continueListening: true))
     }
 
     // MARK: - Isolated ABORT → cleared
@@ -194,7 +194,7 @@ final class HUDStateTests: XCTestCase {
         let states = await stateTask.value
         XCTAssertGreaterThanOrEqual(states.count, 3)
         XCTAssertEqual(states[0], .listening)
-        XCTAssertEqual(states[1], .transcribing())
+        XCTAssertEqual(states[1], .transcribing)
         XCTAssertEqual(states[2], .cleared(continueListening: true))
     }
 
@@ -213,16 +213,15 @@ final class HUDStateTests: XCTestCase {
         )
         await ctrl.start()
 
-        let stateTask = Task { await self.collectStates(from: ctrl, count: 3) }
+        let stateTask = Task { await self.collectStates(from: ctrl, count: 2) }
         try await Task.sleep(nanoseconds: 20_000_000)
         hotkeys.emit(.toggle)
         try await Task.sleep(nanoseconds: 30_000_000)
-        await pipeline.emitSegment(makeSpeechSegment())
+        txr.emitPartial("git status")
 
         let states = await stateTask.value
         XCTAssertEqual(states[0], .listening)
-        XCTAssertEqual(states[1], .transcribing())
-        XCTAssertEqual(states[2], .error("No active terminal target", continueListening: true))
+        XCTAssertEqual(states[1], .error("No active terminal target", continueListening: true))
     }
 
     func testSendFailureEmitsErrorState() async throws {
@@ -263,7 +262,7 @@ final class HUDStateTests: XCTestCase {
 
     // MARK: - Live transcript partial text in HUD
 
-    func testPartialTextAppearsInRecordingState() async throws {
+    func testPartialTextRoutedToOutput() async throws {
         let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
         let txr = MockTranscriber(makeResult(text: "git status"))
@@ -285,10 +284,11 @@ final class HUDStateTests: XCTestCase {
 
         let states = await stateTask.value
         XCTAssertEqual(states[0], .listening)
-        XCTAssertEqual(states[1], .recording(partialText: "git"))
+        XCTAssertEqual(states[1], .recording)
+        XCTAssertEqual(output.appended, ["git"])
     }
 
-    func testMultiplePartialUpdatesVisibleDuringUtterance() async throws {
+    func testMultiplePartialsDeltaAppendedToOutput() async throws {
         let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
         let txr = MockTranscriber(makeResult(text: "git status"))
@@ -302,19 +302,17 @@ final class HUDStateTests: XCTestCase {
         )
         await ctrl.start()
 
-        let stateTask = Task { await self.collectStates(from: ctrl, count: 4) }
         try await Task.sleep(nanoseconds: 20_000_000)
         hotkeys.emit(.toggle)
         try await Task.sleep(nanoseconds: 30_000_000)
         txr.emitPartial("g")
+        try await Task.sleep(nanoseconds: 20_000_000)
         txr.emitPartial("git")
+        try await Task.sleep(nanoseconds: 20_000_000)
         txr.emitPartial("git status")
+        try await Task.sleep(nanoseconds: 50_000_000)
 
-        let states = await stateTask.value
-        XCTAssertEqual(states[0], .listening)
-        XCTAssertEqual(states[1], .recording(partialText: "g"))
-        XCTAssertEqual(states[2], .recording(partialText: "git"))
-        XCTAssertEqual(states[3], .recording(partialText: "git status"))
+        XCTAssertEqual(output.appended, ["g", "it", " status"])
     }
 
     func testStalePartialSuppressedAfterFinalization() async throws {
@@ -385,7 +383,8 @@ final class HUDStateTests: XCTestCase {
 
         let states = await stateTask.value
         XCTAssertEqual(states[0], .listening)
-        XCTAssertEqual(states[1], .recording(partialText: "hello"))
+        XCTAssertEqual(states[1], .recording)
+        XCTAssertEqual(output.appended, ["hello"])
     }
 
     func testFinalResultDoesNotImmediatelyBounceBackToListeningState() async throws {
@@ -412,8 +411,8 @@ final class HUDStateTests: XCTestCase {
         let states = await stateTask.value
         XCTAssertEqual(states, [
             .listening,
-            .transcribing(),
-            .injected("git status", continueListening: true),
+            .transcribing,
+            .injected(continueListening: true),
         ])
     }
 
@@ -452,7 +451,7 @@ final class HUDStateTests: XCTestCase {
     func testHUDAnchoredFrameKeepsBottomMarginWhenHeightChanges() {
         let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
         let compact = HUDWindowController.anchoredFrame(screenFrame: screen)
-        let expanded = HUDWindowController.anchoredFrame(screenFrame: screen, width: 420, height: 88)
+        let expanded = HUDWindowController.anchoredFrame(screenFrame: screen, width: 160, height: 44)
 
         XCTAssertEqual(compact.minY, HUDWindowController.bottomMargin)
         XCTAssertEqual(expanded.minY, HUDWindowController.bottomMargin)

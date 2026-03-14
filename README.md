@@ -6,7 +6,7 @@ macOS menu bar app that transcribes speech and injects it into the active zsh se
 
 ## How it works
 
-Tap Right Control to toggle the mic on. Speak. The HUD shows `Listening` before speech begins, then live transcript updates as partials arrive. Text appears in your terminal's zsh line buffer as VAD finalizes each utterance. Tap Right Control again to stop. No simulated OS keystrokes — Egregore writes directly into ZLE via a named pipe.
+Tap Right Control to toggle the mic on. Speak. The HUD shows `Listening` before speech begins, then live transcript updates as partials arrive. Text appears in your terminal's zsh line buffer as VAD finalizes each utterance. Tap Right Control again to stop. Egregore prefers direct ZLE writes via a named pipe when the target shell is prompt-ready, and falls back to synthetic terminal key events when prompt readiness cannot be confirmed.
 
 Two voice commands:
 
@@ -60,7 +60,7 @@ Sources/Egregore/
 
 ### Shell integration
 
-A managed zsh snippet (installed into `~/.zshrc`) creates a named pipe per session and registers prompt-ready metadata under `~/.config/egregore/sessions/`. ZLE watches the pipe fd. Egregore resolves the frontmost terminal, ranks descendant shells by prompt/focus readiness, and writes `inject|`, `clear|`, or `send|` messages. Terminal-emulator agnostic for shells running zsh.
+A managed zsh snippet (installed into `~/.zshrc`) creates a named pipe per session and registers prompt-ready metadata under `~/.config/egregore/sessions/`. ZLE watches the pipe fd. Egregore resolves the frontmost terminal, ranks descendant shells by prompt/focus readiness, and prefers writing `inject|`, `clear|`, or `send|` messages through that pipe. When a focused terminal is found but prompt readiness is not confirmed, it falls back to synthetic terminal key events. Terminal-emulator agnostic for shells running zsh.
 
 Current limitation: when a child CLI tool is actively owning the terminal session, Egregore still targets the underlying zsh buffer rather than the foreground child process itself.
 

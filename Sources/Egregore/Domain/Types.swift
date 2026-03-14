@@ -57,9 +57,9 @@ enum OutputResult: Equatable {
 enum HUDState: Equatable {
     case idle
     case listening
-    case recording(partialText: String)
-    case transcribing(lastText: String? = nil)
-    case injected(String, continueListening: Bool = false)
+    case recording
+    case transcribing
+    case injected(continueListening: Bool = false)
     case cleared(continueListening: Bool = false)
     case error(String, continueListening: Bool = false)
 }
