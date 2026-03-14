@@ -19,14 +19,24 @@ let package = Package(
             ],
             path: "Sources/Egregore"
         ),
+        .target(
+            name: "EgregoreReadLib",
+            path: "Sources/EgregoreReadLib"
+        ),
         .executableTarget(
             name: "EgregoreRead",
+            dependencies: ["EgregoreReadLib"],
             path: "Sources/EgregoreRead"
         ),
         .testTarget(
             name: "EgregoreTests",
             dependencies: ["Egregore"],
             path: "Tests/EgregoreTests"
+        ),
+        .testTarget(
+            name: "EgregoreReadTests",
+            dependencies: ["EgregoreReadLib"],
+            path: "Tests/EgregoreReadTests"
         ),
     ]
 )

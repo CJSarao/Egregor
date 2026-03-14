@@ -1,4 +1,5 @@
 import Foundation
+import EgregoreReadLib
 
 // MARK: - Arg parsing
 

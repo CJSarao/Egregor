@@ -1,28 +1,34 @@
 import Foundation
 
-struct Chapter {
-    let title: String?
-    let paragraphs: [String]
+public struct Chapter {
+    public let title: String?
+    public let paragraphs: [String]
 }
 
-struct PageRef {
-    let page: Int
-    let chapterIndex: Int
-    let paragraphIndex: Int
+public struct PageRef {
+    public let page: Int
+    public let chapterIndex: Int
+    public let paragraphIndex: Int
+
+    public init(page: Int, chapterIndex: Int, paragraphIndex: Int) {
+        self.page = page
+        self.chapterIndex = chapterIndex
+        self.paragraphIndex = paragraphIndex
+    }
 }
 
-struct EpubBook {
-    let chapters: [Chapter]
-    let pageList: [PageRef]?
+public struct EpubBook {
+    public let chapters: [Chapter]
+    public let pageList: [PageRef]?
 }
 
-enum EpubError: Error, CustomStringConvertible {
+public enum EpubError: Error, CustomStringConvertible {
     case fileNotFound(String)
     case invalidEpub(String)
     case drmProtected
     case unzipFailed(String)
 
-    var description: String {
+    public var description: String {
         switch self {
         case .fileNotFound(let path): return "File not found: \(path)"
         case .invalidEpub(let reason): return "Invalid epub: \(reason)"
@@ -32,9 +38,9 @@ enum EpubError: Error, CustomStringConvertible {
     }
 }
 
-enum EpubParser {
+public enum EpubParser {
 
-    static func parse(path: String) throws -> EpubBook {
+    public static func parse(path: String) throws -> EpubBook {
         let fm = FileManager.default
         guard fm.fileExists(atPath: path) else { throw EpubError.fileNotFound(path) }
 
