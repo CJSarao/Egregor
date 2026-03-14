@@ -4,22 +4,33 @@ import SwiftUI
 
 @MainActor
 final class HUDWindowController {
+    // MARK: Lifecycle
+
+    init(hudStates: AsyncStream<HUDState>) {
+        viewModel = HUDViewModel(hudStates: hudStates)
+    }
+
+    // MARK: Internal
+
     nonisolated static let width: CGFloat = 420
     nonisolated static let height: CGFloat = 88
     nonisolated static let bottomMargin: CGFloat = 80
 
-    private var window: NSWindow?
-    private let viewModel: HUDViewModel
-    private var screenObserver: Any?
-    private var spaceObserver: Any?
-    private var visibilitySub: AnyCancellable?
-
-    init(hudStates: AsyncStream<HUDState>) {
-        self.viewModel = HUDViewModel(hudStates: hudStates)
+    nonisolated static func anchoredFrame(
+        screenFrame: CGRect,
+        width: CGFloat = HUDWindowController.width,
+        height: CGFloat = HUDWindowController.height,
+        bottomMargin: CGFloat = HUDWindowController.bottomMargin
+    ) -> CGRect {
+        let x = screenFrame.midX - width / 2
+        let y = screenFrame.minY + bottomMargin
+        return CGRect(x: x, y: y, width: width, height: height)
     }
 
     func show() {
-        guard window == nil else { return }
+        guard window == nil else {
+            return
+        }
 
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: Self.width, height: Self.height),
@@ -56,23 +67,31 @@ final class HUDWindowController {
         visibilitySub = viewModel.$visible
             .receive(on: RunLoop.main)
             .sink { [weak self] visible in
-                if visible { self?.relayout() }
+                if visible {
+                    self?.relayout()
+                }
             }
     }
 
-    nonisolated static func anchoredFrame(screenFrame: CGRect, width: CGFloat = HUDWindowController.width, height: CGFloat = HUDWindowController.height, bottomMargin: CGFloat = HUDWindowController.bottomMargin) -> CGRect {
-        let x = screenFrame.midX - width / 2
-        let y = screenFrame.minY + bottomMargin
-        return CGRect(x: x, y: y, width: width, height: height)
-    }
+    // MARK: Private
+
+    private var window: NSWindow?
+    private let viewModel: HUDViewModel
+    private var screenObserver: Any?
+    private var spaceObserver: Any?
+    private var visibilitySub: AnyCancellable?
 
     private func relayout() {
-        guard let window else { return }
+        guard let window else {
+            return
+        }
         layoutWindow(window)
     }
 
     private func layoutWindow(_ window: NSWindow) {
-        guard let screen = NSScreen.main else { return }
+        guard let screen = NSScreen.main else {
+            return
+        }
         let screenFrame = screen.visibleFrame
         let frame = Self.anchoredFrame(screenFrame: screenFrame)
         window.setFrame(frame, display: true)
@@ -81,12 +100,7 @@ final class HUDWindowController {
 
 @MainActor
 final class HUDViewModel: ObservableObject {
-    private static let finalStateDwell: UInt64 = 900_000_000
-
-    @Published var state: HUDState = .idle
-    @Published var visible = false
-
-    private var fadeTask: Task<Void, Never>?
+    // MARK: Lifecycle
 
     init(hudStates: AsyncStream<HUDState>) {
         Task { @MainActor [weak self] in
@@ -96,36 +110,66 @@ final class HUDViewModel: ObservableObject {
         }
     }
 
+    // MARK: Internal
+
+    @Published var state: HUDState = .idle
+    @Published var visible = false
+    @Published var partialText: String = ""
+
+    // MARK: Private
+
+    private static let finalStateDwell: UInt64 = 900_000_000
+
+    private var fadeTask: Task<Void, Never>?
+
     private func apply(_ newState: HUDState) {
         fadeTask?.cancel()
+        if case let .recording(text) = newState {
+            partialText = text
+            if case .recording = state {
+                return
+            }
+        }
         state = newState
 
         switch newState {
         case .idle:
             visible = false
-        case .listening, .recording, .transcribing:
+
+        case .listening,
+             .recording,
+             .transcribing:
             visible = true
-        case .injected(_, let continueListening):
-            visible = true
-            fadeTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: Self.finalStateDwell)
-                guard !Task.isCancelled else { return }
-                self?.state = continueListening ? .listening : .idle
-                self?.visible = continueListening
-            }
-        case .cleared(let continueListening):
+
+        case let .injected(_, continueListening):
             visible = true
             fadeTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: Self.finalStateDwell)
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled else {
+                    return
+                }
                 self?.state = continueListening ? .listening : .idle
                 self?.visible = continueListening
             }
-        case .error(_, let continueListening):
+
+        case let .cleared(continueListening):
+            visible = true
+            fadeTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: Self.finalStateDwell)
+                guard !Task.isCancelled else {
+                    return
+                }
+                self?.state = continueListening ? .listening : .idle
+                self?.visible = continueListening
+            }
+
+        case let .error(_, continueListening):
             visible = true
             fadeTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: 1_800_000_000)
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled else {
+                    return
+                }
                 self?.state = continueListening ? .listening : .idle
                 self?.visible = continueListening
             }
@@ -134,6 +178,8 @@ final class HUDViewModel: ObservableObject {
 }
 
 struct HUDContentView: View {
+    // MARK: Internal
+
     @ObservedObject var viewModel: HUDViewModel
 
     var body: some View {
@@ -147,7 +193,8 @@ struct HUDContentView: View {
         .animation(.easeInOut(duration: 0.2), value: viewModel.visible)
     }
 
-    @ViewBuilder
+    // MARK: Private
+
     private var hudBody: some View {
         HStack(spacing: 10) {
             statusIcon
@@ -170,19 +217,24 @@ struct HUDContentView: View {
             Circle()
                 .fill(.red)
                 .frame(width: 10, height: 10)
+
         case .recording:
             Circle()
                 .fill(.red)
                 .frame(width: 10, height: 10)
+
         case .transcribing:
             ProgressView()
                 .controlSize(.small)
+
         case .injected:
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
+
         case .error:
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.yellow)
+
         default:
             EmptyView()
         }
@@ -195,17 +247,16 @@ struct HUDContentView: View {
             Text("Listening")
                 .font(.system(.body, design: .monospaced))
                 .foregroundStyle(.primary)
-        case .recording(let partialText):
+
+        case .recording:
             VStack(alignment: .leading, spacing: 2) {
                 Text("Listening")
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
-                Text(partialText)
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
+                PartialTextView(text: viewModel.partialText)
             }
-        case .transcribing(let lastText):
+
+        case let .transcribing(lastText):
             if let lastText, !lastText.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Finalizing")
@@ -221,23 +272,40 @@ struct HUDContentView: View {
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
-        case .injected(let text, _):
+
+        case let .injected(text, _):
             Text(text)
                 .font(.system(.body, design: .monospaced))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
+
         case .cleared:
             Text("Cleared")
                 .font(.system(.body, design: .monospaced))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
-        case .error(let text, _):
+
+        case let .error(text, _):
             Text(text)
                 .font(.system(.body, design: .monospaced))
                 .foregroundStyle(.primary)
                 .lineLimit(2)
+
         default:
             EmptyView()
         }
+    }
+}
+
+struct PartialTextView: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(.body, design: .monospaced))
+            .foregroundStyle(.primary)
+            .lineLimit(2)
+            .contentTransition(.interpolate)
+            .animation(.easeInOut(duration: 0.15), value: text)
     }
 }

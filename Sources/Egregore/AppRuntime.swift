@@ -5,11 +5,51 @@ import SwiftUI
 
 @MainActor
 final class AppRuntime: ObservableObject {
+    // MARK: Lifecycle
+
+    init() {
+        let bindings = HotkeyBindings.default
+        hotkeyBindings = bindings
+        let hotkeys = NSEventHotkeyManager(bindings: bindings)
+        hotkeyManager = hotkeys
+        let pipeline = AVAudioEnginePipeline()
+        let transcriber = WhisperKitTranscriber()
+        self.transcriber = transcriber
+        let resolver = EgregoreIntentResolver()
+        let output = ShellOutputManager()
+        let controller = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: transcriber,
+            resolver: resolver,
+            output: output
+        )
+
+        self.controller = controller
+        hudController = HUDWindowController(hudStates: controller.hudStates)
+        refreshStatus()
+        if !UserDefaults.standard.bool(forKey: Self.hasCompletedSetupKey) || needsSetup {
+            showsSetup = true
+        }
+        if !accessibilityTrusted {
+            startAccessibilityPolling()
+        }
+        hudController.show()
+        RuntimeLogger.shared
+            .log("Egregore started — mic: \(microphoneStatus.rawValue), accessibility: \(accessibilityTrusted), shell: \(shellIntegrationInstalled)")
+        Task { await transcriber.prepare() }
+        Task { await controller.start() }
+    }
+
+    // MARK: Internal
+
     enum MicrophoneStatus: String {
         case notDetermined = "Not requested"
         case authorized = "Granted"
         case denied = "Denied"
         case restricted = "Restricted"
+
+        // MARK: Lifecycle
 
         init(_ status: AVAuthorizationStatus) {
             switch status {
@@ -35,53 +75,11 @@ final class AppRuntime: ObservableObject {
     @Published private(set) var keyDiagnosticsEnabled = false
     @Published var showsSetup = false
 
-    private static let hasCompletedSetupKey = "egregore.hasCompletedSetup"
-
-    var needsSetup: Bool {
-        !shellIntegrationInstalled || microphoneStatus != .authorized || !accessibilityTrusted
-    }
-
     let shellSnippet = ShellIntegrationInstaller.snippet
     let hotkeyBindings: HotkeyBindings
 
-    private let installer = ShellIntegrationInstaller()
-    private let controller: SessionController
-    private let hudController: HUDWindowController
-    private let hotkeyManager: NSEventHotkeyManager
-    private let transcriber: WhisperKitTranscriber
-    private var accessibilityTimer: Timer?
-
-    init() {
-        let bindings = HotkeyBindings.default
-        self.hotkeyBindings = bindings
-        let hotkeys = NSEventHotkeyManager(bindings: bindings)
-        self.hotkeyManager = hotkeys
-        let pipeline = AVAudioEnginePipeline()
-        let transcriber = WhisperKitTranscriber()
-        self.transcriber = transcriber
-        let resolver = EgregoreIntentResolver()
-        let output = ShellOutputManager()
-        let controller = SessionController(
-            hotkeys: hotkeys,
-            pipeline: pipeline,
-            transcriber: transcriber,
-            resolver: resolver,
-            output: output
-        )
-
-        self.controller = controller
-        self.hudController = HUDWindowController(hudStates: controller.hudStates)
-        refreshStatus()
-        if !UserDefaults.standard.bool(forKey: Self.hasCompletedSetupKey) || needsSetup {
-            showsSetup = true
-        }
-        if !accessibilityTrusted {
-            startAccessibilityPolling()
-        }
-        hudController.show()
-        RuntimeLogger.shared.log("Egregore started — mic: \(microphoneStatus.rawValue), accessibility: \(accessibilityTrusted), shell: \(shellIntegrationInstalled)")
-        Task { await transcriber.prepare() }
-        Task { await controller.start() }
+    var needsSetup: Bool {
+        !shellIntegrationInstalled || microphoneStatus != .authorized || !accessibilityTrusted
     }
 
     func refreshStatus() {
@@ -131,11 +129,30 @@ final class AppRuntime: ObservableObject {
         lastError = nil
     }
 
+    func setKeyDiagnostics(_ enabled: Bool) {
+        keyDiagnosticsEnabled = enabled
+        Task { await hotkeyManager.setDiagnostics(enabled: enabled) }
+    }
+
+    // MARK: Private
+
+    private static let hasCompletedSetupKey = "egregore.hasCompletedSetup"
+
+    private let installer = ShellIntegrationInstaller()
+    private let controller: SessionController
+    private let hudController: HUDWindowController
+    private let hotkeyManager: NSEventHotkeyManager
+    private let transcriber: WhisperKitTranscriber
+    private var accessibilityTimer: Timer?
+
     private func startAccessibilityPolling() {
         accessibilityTimer?.invalidate()
         accessibilityTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] timer in
             Task { @MainActor in
-                guard let self else { timer.invalidate(); return }
+                guard let self else {
+                    timer.invalidate()
+                    return
+                }
                 self.accessibilityTrusted = AXIsProcessTrusted()
                 if self.accessibilityTrusted {
                     timer.invalidate()
@@ -143,10 +160,5 @@ final class AppRuntime: ObservableObject {
                 }
             }
         }
-    }
-
-    func setKeyDiagnostics(_ enabled: Bool) {
-        keyDiagnosticsEnabled = enabled
-        Task { await hotkeyManager.setDiagnostics(enabled: enabled) }
     }
 }

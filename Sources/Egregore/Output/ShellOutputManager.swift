@@ -3,10 +3,101 @@ import CoreGraphics
 import Darwin
 
 final class ShellOutputManager: OutputManager {
+    // MARK: Lifecycle
+
+    init(
+        registryURL: URL = URL.homeDirectory.appending(path: ".config/egregore/sessions"),
+        activityURL: URL = URL.homeDirectory.appending(path: ".config/egregore/activity"),
+        frontmostApplicationProvider: @escaping () -> FrontmostApplicationInfo? = {
+            guard let app = NSWorkspace.shared.frontmostApplication else {
+                return nil
+            }
+            return FrontmostApplicationInfo(pid: pid_t(app.processIdentifier), name: app.localizedName ?? "unknown")
+        },
+        childPIDProvider: @escaping (pid_t) -> [pid_t] = ShellOutputManager.childPIDs(of:),
+        visibleWindowPIDsProvider: @escaping () -> Set<pid_t> = ShellOutputManager.visibleWindowOwnerPIDs,
+        logger: RuntimeLogger = .shared
+    ) {
+        log = logger
+        sessionResolver = {
+            Self.resolveSession(
+                registryURL: registryURL,
+                activityURL: activityURL,
+                frontmostApplicationProvider: frontmostApplicationProvider,
+                childPIDProvider: childPIDProvider,
+                visibleWindowPIDsProvider: visibleWindowPIDsProvider,
+                logger: logger
+            )
+        }
+    }
+
+    init(sessionResolver: @escaping () -> String?, logger: RuntimeLogger = .shared) {
+        self.sessionResolver = {
+            sessionResolver().map {
+                SessionTarget(
+                    pipePath: $0,
+                    shellPID: nil,
+                    frontmostAppPID: nil,
+                    frontmostAppName: nil,
+                    ancestry: [],
+                    metadata: SessionMetadata(
+                        pipePath: $0, lastPromptAt: nil, lastFocusAt: nil,
+                        isFocused: nil, isAtPrompt: true, tty: nil
+                    )
+                )
+            }
+        }
+        log = logger
+    }
+
+    // MARK: Internal
+
     struct FrontmostApplicationInfo {
         let pid: pid_t
         let name: String
     }
+
+    func append(_ text: String) -> OutputResult {
+        guard let target = sessionResolver() else {
+            log.error("append failed: no registered shell session found", category: .output)
+            return .failure("No active terminal target")
+        }
+        if let metadata = target.metadata, metadata.effectivePrompt {
+            return writeToPipe(action: "inject", text: text, target: target)
+        }
+        log.log("append: not confirmed at prompt, posting keyboard events text=<<<\(text)>>>", category: .output)
+        let prefix = hasInjectedSinceLastSend ? " " : ""
+        hasInjectedSinceLastSend = true
+        return Self.postKeyEvents(text: prefix + text, logger: log)
+    }
+
+    func clear() -> OutputResult {
+        guard let target = sessionResolver() else {
+            log.error("clear failed: no registered shell session found", category: .output)
+            return .failure("No active terminal target")
+        }
+        if let metadata = target.metadata, metadata.effectivePrompt {
+            return writeToPipe(action: "clear", text: "", target: target)
+        }
+        log.log("clear: not confirmed at prompt, posting Ctrl+U", category: .output)
+        hasInjectedSinceLastSend = false
+        return Self.postControlKey(0x20, logger: log)
+    }
+
+    func send() -> OutputResult {
+        guard let target = sessionResolver() else {
+            log.error("send failed: no registered shell session found", category: .output)
+            return .failure("No active terminal target")
+        }
+        if let metadata = target.metadata, metadata.effectivePrompt {
+            return writeToPipe(action: "send", text: "", target: target)
+        }
+        log.log("send: not confirmed at prompt, posting Return key", category: .output)
+        hasInjectedSinceLastSend = false
+        return Self.postReturnKey(logger: log)
+    }
+
+    // MARK: Private
 
     private struct SessionTarget {
         let pipePath: String
@@ -33,14 +124,25 @@ final class ShellOutputManager: OutputManager {
         let isAtPrompt: Bool?
         let tty: String?
 
-        var promptDate: Date? { lastPromptAt.map(Date.init(timeIntervalSince1970:)) }
-        var focusDate: Date? { lastFocusAt.map(Date.init(timeIntervalSince1970:)) }
-        var effectiveFocus: Bool { isFocused ?? false }
-        var effectivePrompt: Bool { isAtPrompt ?? false }
+        var promptDate: Date? {
+            lastPromptAt.map(Date.init(timeIntervalSince1970:))
+        }
 
-        static func legacy(pipePath: String, lastActivity: Date?) -> SessionMetadata {
+        var focusDate: Date? {
+            lastFocusAt.map(Date.init(timeIntervalSince1970:))
+        }
+
+        var effectiveFocus: Bool {
+            isFocused ?? false
+        }
+
+        var effectivePrompt: Bool {
+            isAtPrompt ?? false
+        }
+
+        static func legacy(pipePath: String, lastActivity: Date?) -> Self {
             let seconds = lastActivity?.timeIntervalSince1970
-            return SessionMetadata(
+            return Self(
                 pipePath: pipePath,
                 lastPromptAt: seconds,
                 lastFocusAt: seconds,
@@ -51,104 +153,84 @@ final class ShellOutputManager: OutputManager {
         }
     }
 
+    private static let interKeyDelay: UInt32 = 2000
+
     private let sessionResolver: () -> SessionTarget?
     private let log: RuntimeLogger
+    private var hasInjectedSinceLastSend = false
 
-    init(registryURL: URL = URL.homeDirectory.appending(path: ".config/egregore/sessions"),
-         activityURL: URL = URL.homeDirectory.appending(path: ".config/egregore/activity"),
-         frontmostApplicationProvider: @escaping () -> FrontmostApplicationInfo? = {
-             guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
-             return FrontmostApplicationInfo(pid: pid_t(app.processIdentifier), name: app.localizedName ?? "unknown")
-         },
-         childPIDProvider: @escaping (pid_t) -> [pid_t] = ShellOutputManager.childPIDs(of:),
-         visibleWindowPIDsProvider: @escaping () -> Set<pid_t> = ShellOutputManager.visibleWindowOwnerPIDs,
-         logger: RuntimeLogger = .shared) {
-        self.log = logger
-        self.sessionResolver = {
-            ShellOutputManager.resolveSession(
-                registryURL: registryURL,
-                activityURL: activityURL,
-                frontmostApplicationProvider: frontmostApplicationProvider,
-                childPIDProvider: childPIDProvider,
-                visibleWindowPIDsProvider: visibleWindowPIDsProvider,
-                logger: logger
-            )
-        }
-    }
-
-    init(sessionResolver: @escaping () -> String?, logger: RuntimeLogger = .shared) {
-        self.sessionResolver = {
-            sessionResolver().map {
-                SessionTarget(pipePath: $0, shellPID: nil, frontmostAppPID: nil, frontmostAppName: nil, ancestry: [], metadata: nil)
-            }
-        }
-        self.log = logger
-    }
-
-    func append(_ text: String) -> OutputResult {
-        writeToPipe(action: "inject", text: text)
-    }
-
-    func clear() -> OutputResult {
-        writeToPipe(action: "clear", text: "")
-    }
-
-    func send() -> OutputResult {
-        writeToPipe(action: "send", text: "")
-    }
-
-    private func writeToPipe(action: String, text: String) -> OutputResult {
-        let message = "\(action)|\(text)\n"
-        log.log(
-            "writeToPipe: action=\(action) textBytes=\(text.utf8.count) payloadBytes=\(message.utf8.count)",
-            category: .output
-        )
-        guard let target = sessionResolver() else {
-            log.error("writeToPipe failed: no registered shell session found", category: .output)
-            return .failure("No active terminal target")
-        }
-        if !FileManager.default.fileExists(atPath: target.pipePath) {
-            log.error(
-                "writeToPipe failed: resolved pipe missing at \(target.pipePath) action=\(action) shellPID=\(Self.describe(target.shellPID)) frontmostApp=\(Self.describe(target.frontmostAppName)) frontPID=\(Self.describe(target.frontmostAppPID)) ancestry=\(Self.describe(target.ancestry))",
-                category: .output
-            )
-            return .failure("Terminal session disappeared")
-        }
-        let fd = Darwin.open(target.pipePath, O_WRONLY | O_NONBLOCK)
-        guard fd >= 0 else {
-            log.error(
-                "writeToPipe failed: could not open pipe at \(target.pipePath) action=\(action) shellPID=\(Self.describe(target.shellPID)) errno=\(errno)",
-                category: .output
-            )
-            return .failure("Terminal session is busy")
-        }
-        defer { Darwin.close(fd) }
-        var writeOk = true
-        message.withCString { ptr in
-            let total = strlen(ptr)
-            var offset = 0
-            while offset < total {
-                let n = Darwin.write(fd, ptr + offset, total - offset)
-                if n < 0 {
-                    if errno == EINTR { continue }
-                    log.error(
-                        "writeToPipe failed: write error on \(target.pipePath) action=\(action) shellPID=\(Self.describe(target.shellPID)) errno=\(errno) wrote=\(offset)/\(total)",
-                        category: .output
-                    )
-                    writeOk = false
+    private static func postKeyEvents(text: String, logger: RuntimeLogger) -> OutputResult {
+        let chars = Array(text)
+        let delay = interKeyDelay
+        DispatchQueue.global(qos: .userInteractive).async {
+            let source = CGEventSource(stateID: .hidSystemState)
+            for (i, char) in chars.enumerated() {
+                var utf16 = Array(String(char).utf16)
+                guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+                      let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
+                else {
+                    logger.error("postKeyEvents: failed to create CGEvent at char \(i)", category: .output)
                     return
                 }
-                offset += n
+                keyDown.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
+                keyDown.post(tap: .cgSessionEventTap)
+                keyUp.post(tap: .cgSessionEventTap)
+                if i < chars.count - 1 {
+                    usleep(delay)
+                }
             }
+            logger.log("postKeyEvents: posted \(chars.count) characters", category: .output)
         }
-        if writeOk {
-            log.log(
-                "writeToPipe: delivered action=\(action) bytes=\(message.utf8.count) pipe=\(target.pipePath) shellPID=\(Self.describe(target.shellPID)) frontmostApp=\(Self.describe(target.frontmostAppName)) frontPID=\(Self.describe(target.frontmostAppPID)) ancestry=\(Self.describe(target.ancestry))",
-                category: .output
-            )
-            return .success
+        return .success
+    }
+
+    private static func postReturnKey(logger: RuntimeLogger) -> OutputResult {
+        let source = CGEventSource(stateID: .hidSystemState)
+        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x24, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x24, keyDown: false)
+        else {
+            logger.error("postReturnKey: failed to create CGEvent", category: .output)
+            return .failure("Failed to simulate Return key")
         }
-        return .failure("Failed to write to terminal")
+        keyDown.post(tap: .cgSessionEventTap)
+        keyUp.post(tap: .cgSessionEventTap)
+        logger.log("postReturnKey: posted Return", category: .output)
+        return .success
+    }
+
+    private static func postControlKey(_ virtualKey: CGKeyCode, logger: RuntimeLogger) -> OutputResult {
+        let source = CGEventSource(stateID: .hidSystemState)
+        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: false)
+        else {
+            logger.error("postControlKey: failed to create CGEvent for key \(virtualKey)", category: .output)
+            return .failure("Failed to simulate control key")
+        }
+        keyDown.flags = .maskControl
+        keyDown.post(tap: .cgSessionEventTap)
+        keyUp.flags = .maskControl
+        keyUp.post(tap: .cgSessionEventTap)
+        logger.log("postControlKey: posted Ctrl+key(\(virtualKey))", category: .output)
+        return .success
+    }
+
+    private static func ttyPath(for pid: pid_t) -> String? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0 else {
+            return nil
+        }
+        let tdev = info.kp_eproc.e_tdev
+        guard tdev != UInt32.max else {
+            return nil
+        }
+        let major = Int(tdev >> 24) & 0xFF
+        let minor = Int(tdev) & 0xFFFFFF
+        guard major == 16 else {
+            return nil
+        }
+        return String(format: "/dev/ttys%03d", minor)
     }
 
     private static func resolveSession(
@@ -193,7 +275,10 @@ final class ShellOutputManager: OutputManager {
                 metadata: match.metadata
             )
         } else {
-            logger.error("session resolve: no registered shell under \(appName) (PID \(frontPID)), registry: \(registryURL.path())", category: .output)
+            logger.error(
+                "session resolve: no registered shell under \(appName) (PID \(frontPID)), registry: \(registryURL.path())",
+                category: .output
+            )
         }
         return nil
     }
@@ -212,7 +297,10 @@ final class ShellOutputManager: OutputManager {
             if metadata.pipePath.isEmpty {
                 logger.error("session resolve: empty registry entry for PID \(pid) at \(sessionFile.path())", category: .output)
             } else if !FileManager.default.fileExists(atPath: metadata.pipePath) {
-                logger.error("session resolve: stale registry entry PID \(pid) → \(metadata.pipePath) via ancestry \(describe(ancestry))", category: .output)
+                logger.error(
+                    "session resolve: stale registry entry PID \(pid) → \(metadata.pipePath) via ancestry \(describe(ancestry))",
+                    category: .output
+                )
             } else {
                 logger.log(
                     "session resolve: matched PID \(pid) via ancestry \(describe(ancestry)) → \(metadata.pipePath) prompt=\(describe(metadata.promptDate)) focus=\(describe(metadata.focusDate)) isFocused=\(metadata.effectiveFocus) isAtPrompt=\(metadata.effectivePrompt) tty=\(describe(metadata.tty))",
@@ -245,7 +333,9 @@ final class ShellOutputManager: OutputManager {
     }
 
     private static func chooseBestMatch(_ matches: [SessionMatch], logger: RuntimeLogger) -> SessionMatch? {
-        guard !matches.isEmpty else { return nil }
+        guard !matches.isEmpty else {
+            return nil
+        }
         if matches.count > 1 {
             let summary = matches
                 .sorted(by: isPreferred(_:over:))
@@ -256,7 +346,9 @@ final class ShellOutputManager: OutputManager {
             logger.log("session resolve: candidates \(summary)", category: .output)
         }
         let sorted = matches.sorted(by: isPreferred(_:over:))
-        guard let best = sorted.first else { return nil }
+        guard let best = sorted.first else {
+            return nil
+        }
         if sorted.count > 1, samePriority(best, sorted[1]) {
             logger.error("session resolve: ambiguous top candidates; refusing to inject until focus is clearer", category: .output)
             return nil
@@ -267,7 +359,8 @@ final class ShellOutputManager: OutputManager {
     private static func readSessionMetadata(from sessionFile: URL, activityURL: URL, pid: pid_t) -> SessionMetadata? {
         guard let raw = try? String(contentsOf: sessionFile, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines),
-              !raw.isEmpty else {
+            !raw.isEmpty
+        else {
             return nil
         }
         if raw.first == "{",
@@ -304,17 +397,18 @@ final class ShellOutputManager: OutputManager {
 
     private static func samePriority(_ lhs: SessionMatch, _ rhs: SessionMatch) -> Bool {
         lhs.metadata.effectiveFocus == rhs.metadata.effectiveFocus &&
-        lhs.metadata.effectivePrompt == rhs.metadata.effectivePrompt &&
-        lhs.metadata.focusDate == rhs.metadata.focusDate &&
-        (lhs.metadata.promptDate ?? lhs.lastActivity) == (rhs.metadata.promptDate ?? rhs.lastActivity) &&
-        lhs.ancestry.count == rhs.ancestry.count
+            lhs.metadata.effectivePrompt == rhs.metadata.effectivePrompt &&
+            lhs.metadata.focusDate == rhs.metadata.focusDate &&
+            (lhs.metadata.promptDate ?? lhs.lastActivity) == (rhs.metadata.promptDate ?? rhs.lastActivity) &&
+            lhs.ancestry.count == rhs.ancestry.count
     }
 
     private static func readLastActivity(for pid: pid_t, activityURL: URL) -> Date? {
         let fileURL = activityURL.appending(path: "\(pid)")
         guard let value = try? String(contentsOf: fileURL, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines),
-              let seconds = Double(value) else {
+            let seconds = Double(value)
+        else {
             return nil
         }
         return Date(timeIntervalSince1970: seconds)
@@ -327,14 +421,15 @@ final class ShellOutputManager: OutputManager {
         let count = size / MemoryLayout<kinfo_proc>.stride
         var procs = [kinfo_proc](repeating: kinfo_proc(), count: count)
         sysctl(&mib, 4, &procs, &size, nil, 0)
-        return procs.filter { $0.kp_eproc.e_ppid == parentPID }.map { $0.kp_proc.p_pid }
+        return procs.filter { $0.kp_eproc.e_ppid == parentPID }.map(\.kp_proc.p_pid)
     }
 
     private static func visibleWindowOwnerPIDs() -> Set<pid_t> {
         guard let windowList = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements],
             kCGNullWindowID
-        ) as? [[String: Any]] else {
+        ) as? [[String: Any]]
+        else {
             return []
         }
         var pids = Set<pid_t>()
@@ -357,11 +452,106 @@ final class ShellOutputManager: OutputManager {
     }
 
     private static func describe(_ value: Date?) -> String {
-        guard let value else { return "unknown" }
+        guard let value else {
+            return "unknown"
+        }
         return RuntimeLogger.timestampString(for: value)
     }
 
     private static func describe(_ ancestry: [pid_t]) -> String {
         ancestry.map(String.init).joined(separator: "->")
+    }
+
+    private func writeToTTY(text: String, target: SessionTarget) -> OutputResult {
+        let tty: String
+        if let metadataTTY = target.metadata?.tty, !metadataTTY.isEmpty {
+            tty = metadataTTY
+        } else if let shellPID = target.shellPID, let resolved = Self.ttyPath(for: shellPID) {
+            tty = resolved
+        } else {
+            log.error("writeToTTY failed: no tty for shellPID=\(Self.describe(target.shellPID))", category: .output)
+            return .failure("Cannot find terminal device")
+        }
+        log.log("writeToTTY: tty=\(tty) textBytes=\(text.utf8.count) shellPID=\(Self.describe(target.shellPID))", category: .output)
+        let fd = Darwin.open(tty, O_WRONLY | O_NONBLOCK)
+        guard fd >= 0 else {
+            log.error("writeToTTY failed: could not open \(tty) errno=\(errno)", category: .output)
+            return .failure("Cannot write to terminal device")
+        }
+        defer { Darwin.close(fd) }
+        var writeOk = true
+        text.withCString { ptr in
+            let total = strlen(ptr)
+            var offset = 0
+            while offset < total {
+                let n = Darwin.write(fd, ptr + offset, total - offset)
+                if n < 0 {
+                    if errno == EINTR {
+                        continue
+                    }
+                    log.error("writeToTTY failed: write error on \(tty) errno=\(errno) wrote=\(offset)/\(total)", category: .output)
+                    writeOk = false
+                    return
+                }
+                offset += n
+            }
+        }
+        if writeOk {
+            log.log("writeToTTY: delivered bytes=\(text.utf8.count) tty=\(tty) shellPID=\(Self.describe(target.shellPID))", category: .output)
+            return .success
+        }
+        return .failure("Failed to write to terminal device")
+    }
+
+    private func writeToPipe(action: String, text: String, target: SessionTarget) -> OutputResult {
+        let message = "\(action)|\(text)\n"
+        log.log(
+            "writeToPipe: action=\(action) textBytes=\(text.utf8.count) payloadBytes=\(message.utf8.count)",
+            category: .output
+        )
+        if !FileManager.default.fileExists(atPath: target.pipePath) {
+            log.error(
+                "writeToPipe failed: resolved pipe missing at \(target.pipePath) action=\(action) shellPID=\(Self.describe(target.shellPID)) frontmostApp=\(Self.describe(target.frontmostAppName)) frontPID=\(Self.describe(target.frontmostAppPID)) ancestry=\(Self.describe(target.ancestry))",
+                category: .output
+            )
+            return .failure("Terminal session disappeared")
+        }
+        let fd = Darwin.open(target.pipePath, O_WRONLY | O_NONBLOCK)
+        guard fd >= 0 else {
+            log.error(
+                "writeToPipe failed: could not open pipe at \(target.pipePath) action=\(action) shellPID=\(Self.describe(target.shellPID)) errno=\(errno)",
+                category: .output
+            )
+            return .failure("Terminal session is busy")
+        }
+        defer { Darwin.close(fd) }
+        var writeOk = true
+        message.withCString { ptr in
+            let total = strlen(ptr)
+            var offset = 0
+            while offset < total {
+                let n = Darwin.write(fd, ptr + offset, total - offset)
+                if n < 0 {
+                    if errno == EINTR {
+                        continue
+                    }
+                    log.error(
+                        "writeToPipe failed: write error on \(target.pipePath) action=\(action) shellPID=\(Self.describe(target.shellPID)) errno=\(errno) wrote=\(offset)/\(total)",
+                        category: .output
+                    )
+                    writeOk = false
+                    return
+                }
+                offset += n
+            }
+        }
+        if writeOk {
+            log.log(
+                "writeToPipe: delivered action=\(action) bytes=\(message.utf8.count) pipe=\(target.pipePath) shellPID=\(Self.describe(target.shellPID)) frontmostApp=\(Self.describe(target.frontmostAppName)) frontPID=\(Self.describe(target.frontmostAppPID)) ancestry=\(Self.describe(target.ancestry))",
+                category: .output
+            )
+            return .success
+        }
+        return .failure("Failed to write to terminal")
     }
 }

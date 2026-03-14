@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct MenuBarView: View {
+    // MARK: Internal
+
     @ObservedObject var runtime: AppRuntime
 
     var body: some View {
@@ -93,6 +95,8 @@ struct MenuBarView: View {
         .frame(width: runtime.showsShellSnippet ? 460 : 320, alignment: .leading)
     }
 
+    // MARK: Private
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text("Egregore")
@@ -158,25 +162,6 @@ struct MenuBarView: View {
         }
     }
 
-    @ViewBuilder
-    private func setupStep<Content: View>(number: Int, title: String, status: String, done: Bool, @ViewBuilder action: () -> Content) -> some View {
-        HStack(spacing: 6) {
-            Text(done ? "\u{2713}" : "\(number)")
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(done ? .green : .secondary)
-                .frame(width: 16)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 11, weight: .medium))
-                Text(status)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            action()
-        }
-    }
-
     private var hotkeyBindingsSection: some View {
         let b = runtime.hotkeyBindings
         return VStack(alignment: .leading, spacing: 4) {
@@ -195,6 +180,24 @@ struct MenuBarView: View {
                     .font(.system(size: 10))
                     .foregroundStyle(.orange)
             }
+        }
+    }
+
+    private func setupStep(number: Int, title: String, status: String, done: Bool, @ViewBuilder action: () -> some View) -> some View {
+        HStack(spacing: 6) {
+            Text(done ? "\u{2713}" : "\(number)")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(done ? .green : .secondary)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 11, weight: .medium))
+                Text(status)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            action()
         }
     }
 

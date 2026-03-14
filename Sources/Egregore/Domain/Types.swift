@@ -1,22 +1,18 @@
 import AppKit
 import Foundation
 
-struct KeyBinding: Sendable, Equatable {
+struct KeyBinding: Equatable {
     let keyCode: UInt16
     let flag: NSEvent.ModifierFlags
     let displayName: String
-
-    static func == (lhs: KeyBinding, rhs: KeyBinding) -> Bool {
-        lhs.keyCode == rhs.keyCode && lhs.flag == rhs.flag && lhs.displayName == rhs.displayName
-    }
 }
 
-struct HotkeyBindings: Sendable {
-    let toggleKey: KeyBinding
-
-    static let `default` = HotkeyBindings(
+struct HotkeyBindings {
+    static let `default` = Self(
         toggleKey: KeyBinding(keyCode: 62, flag: .control, displayName: "Right Control")
     )
+
+    let toggleKey: KeyBinding
 }
 
 struct SpeechSegment {

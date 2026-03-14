@@ -1,10 +1,23 @@
 import Foundation
 
 struct ShellIntegrationInstaller {
-    private static let beginMarker = "# BEGIN Egregore integration — managed by Egregore.app"
-    private static let endMarker = "# END Egregore integration"
+    // MARK: Lifecycle
 
-    // Swift multiline raw string: closing """# at 4-space indent strips 4 spaces from each content line
+    init(
+        zshrcURL: URL = URL.homeDirectory.appending(path: ".zshrc"),
+        registryURL: URL = URL.homeDirectory.appending(path: ".config/egregore/sessions"),
+        activityURL: URL = URL.homeDirectory.appending(path: ".config/egregore/activity"),
+        egregoreConfigURL: URL = URL.homeDirectory.appending(path: ".config/egregore")
+    ) {
+        self.zshrcURL = zshrcURL
+        self.registryURL = registryURL
+        self.activityURL = activityURL
+        self.egregoreConfigURL = egregoreConfigURL
+    }
+
+    // MARK: Internal
+
+    /// Swift multiline raw string: closing """# at 4-space indent strips 4 spaces from each content line
     static let snippet: String = #"""
     # BEGIN Egregore integration — managed by Egregore.app
     VOICE_PIPE="/tmp/egregore-$$.pipe"
@@ -34,9 +47,11 @@ struct ShellIntegrationInstaller {
 
     _egregore_write_session_state() {
         mkdir -p "$VOICE_REGISTRY"
-        local tty_value
-        tty_value="$(tty 2>/dev/null || print -r -- "")"
-        tty_value="${tty_value//$'\n'/}"
+        if [[ -z "$EGREGORE_TTY" ]]; then
+            EGREGORE_TTY="$(tty 2>/dev/null)"
+            [[ "$EGREGORE_TTY" == "not a tty" ]] && EGREGORE_TTY=""
+        fi
+        local tty_value="$EGREGORE_TTY"
         print -r -- "{\"pipePath\":\"$(_egregore_json_escape "$VOICE_PIPE")\",\"lastPromptAt\":${EGREGORE_LAST_PROMPT_AT:-0},\"lastFocusAt\":${EGREGORE_LAST_FOCUS_AT:-0},\"isFocused\":${EGREGORE_IS_FOCUSED:-false},\"isAtPrompt\":${EGREGORE_IS_AT_PROMPT:-false},\"tty\":\"$(_egregore_json_escape "$tty_value")\"}" > "$VOICE_REGISTRY/$$"
     }
 
@@ -67,6 +82,7 @@ struct ShellIntegrationInstaller {
     trap "exec {VOICE_FD}<&-; rm -f '$VOICE_REGISTRY/$$' '$VOICE_ACTIVITY/$$' '$VOICE_PIPE'" EXIT
     typeset -g EGREGORE_PENDING_ACTION=""
     typeset -g EGREGORE_PENDING_TEXT=""
+    typeset -g EGREGORE_TTY=""
     _egregore_debug "registered pid=$$ pipe=$VOICE_PIPE registry=$VOICE_REGISTRY fd=$VOICE_FD"
 
     _egregore_apply_pending() {
@@ -94,7 +110,7 @@ struct ShellIntegrationInstaller {
                 CURSOR=0
                 _egregore_mark_busy
                 zle -I
-                eval "$cmd"
+                eval "$cmd" > /dev/tty 2>&1
                 _egregore_mark_prompt_ready
                 zle reset-prompt
                 _egregore_debug "send eval completed"
@@ -137,20 +153,10 @@ struct ShellIntegrationInstaller {
     let activityURL: URL
     let egregoreConfigURL: URL
 
-    init(
-        zshrcURL: URL = URL.homeDirectory.appending(path: ".zshrc"),
-        registryURL: URL = URL.homeDirectory.appending(path: ".config/egregore/sessions"),
-        activityURL: URL = URL.homeDirectory.appending(path: ".config/egregore/activity"),
-        egregoreConfigURL: URL = URL.homeDirectory.appending(path: ".config/egregore")
-    ) {
-        self.zshrcURL = zshrcURL
-        self.registryURL = registryURL
-        self.activityURL = activityURL
-        self.egregoreConfigURL = egregoreConfigURL
-    }
-
     var isInstalled: Bool {
-        guard let content = try? String(contentsOf: zshrcURL, encoding: .utf8) else { return false }
+        guard let content = try? String(contentsOf: zshrcURL, encoding: .utf8) else {
+            return false
+        }
         return content.contains(Self.beginMarker)
     }
 
@@ -178,18 +184,27 @@ struct ShellIntegrationInstaller {
         }
         guard fm.fileExists(atPath: zshrcURL.path),
               let content = try? String(contentsOf: zshrcURL, encoding: .utf8),
-              content.contains(Self.beginMarker) else { return }
+              content.contains(Self.beginMarker)
+        else {
+            return
+        }
         try removeBlock(from: content).write(to: zshrcURL, atomically: true, encoding: .utf8)
     }
+
+    // MARK: Private
+
+    private static let beginMarker = "# BEGIN Egregore integration — managed by Egregore.app"
+    private static let endMarker = "# END Egregore integration"
 
     private func removeBlock(from content: String) -> String {
         var lines = content.components(separatedBy: "\n")
         guard let beginIdx = lines.firstIndex(where: { $0.hasPrefix(Self.beginMarker) }),
-              let endIdx = lines[beginIdx...].firstIndex(where: { $0.hasPrefix(Self.endMarker) }) else {
+              let endIdx = lines[beginIdx...].firstIndex(where: { $0.hasPrefix(Self.endMarker) })
+        else {
             return content
         }
         let removeFrom = beginIdx > 0 && lines[beginIdx - 1].isEmpty ? beginIdx - 1 : beginIdx
-        lines.removeSubrange(removeFrom...endIdx)
+        lines.removeSubrange(removeFrom ... endIdx)
         return lines.joined(separator: "\n")
     }
 }

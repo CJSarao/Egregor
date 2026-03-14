@@ -4,13 +4,7 @@ import XCTest
 @testable import Egregore
 
 final class ShellSendIntegrationTests: XCTestCase {
-    private struct SessionFile: Decodable {
-        let pipePath: String
-    }
-
-    private var tempHome: URL!
-    private var process: Process?
-    private var outputPipe: Pipe?
+    // MARK: Internal
 
     override func tearDown() {
         if let process, process.isRunning {
@@ -31,7 +25,7 @@ final class ShellSendIntegrationTests: XCTestCase {
         try launchInteractiveShell()
         let pipePath = try waitForPipePath()
 
-        let manager = ShellOutputManager(sessionResolver: { pipePath })
+        let manager = ShellOutputManager { pipePath }
         XCTAssertEqual(manager.append("echo EGREGORE_SEND_OK"), .success)
         XCTAssertEqual(manager.send(), .success)
 
@@ -39,6 +33,16 @@ final class ShellSendIntegrationTests: XCTestCase {
         XCTAssertTrue(output.contains("echo EGREGORE_SEND_OK"))
         XCTAssertTrue(output.contains("EGREGORE_SEND_OK"))
     }
+
+    // MARK: Private
+
+    private struct SessionFile: Decodable {
+        let pipePath: String
+    }
+
+    private var tempHome: URL!
+    private var process: Process?
+    private var outputPipe: Pipe?
 
     private func launchInteractiveShell() throws {
         tempHome = FileManager.default.temporaryDirectory
@@ -49,7 +53,7 @@ final class ShellSendIntegrationTests: XCTestCase {
         let zshrcContents = [
             "PROMPT='PROMPT> '",
             "unsetopt BEEP",
-            ShellIntegrationInstaller.snippet
+            ShellIntegrationInstaller.snippet,
         ].joined(separator: "\n\n") + "\n"
         try zshrcContents.write(to: zshrc, atomically: true, encoding: .utf8)
 
@@ -88,7 +92,7 @@ final class ShellSendIntegrationTests: XCTestCase {
                !session.pipePath.isEmpty {
                 return session.pipePath
             }
-            usleep(50_000)
+            usleep(50000)
         }
 
         XCTFail("Timed out waiting for shell session registration")
@@ -104,7 +108,7 @@ final class ShellSendIntegrationTests: XCTestCase {
             if output.contains(needle) {
                 return output
             }
-            usleep(50_000)
+            usleep(50000)
         }
 
         XCTFail("Timed out waiting for output containing '\(needle)'. Output so far: \(output)")
@@ -112,7 +116,9 @@ final class ShellSendIntegrationTests: XCTestCase {
     }
 
     private func readAvailableOutput() -> String {
-        guard let outputPipe else { return "" }
+        guard let outputPipe else {
+            return ""
+        }
         let fd = outputPipe.fileHandleForReading.fileDescriptor
         var buffer = [UInt8](repeating: 0, count: 4096)
         var output = ""
@@ -123,7 +129,7 @@ final class ShellSendIntegrationTests: XCTestCase {
                 output += String(decoding: buffer.prefix(count), as: UTF8.self)
                 continue
             }
-            if count < 0 && (errno == EWOULDBLOCK || errno == EAGAIN) {
+            if count < 0, errno == EWOULDBLOCK || errno == EAGAIN {
                 break
             }
             break

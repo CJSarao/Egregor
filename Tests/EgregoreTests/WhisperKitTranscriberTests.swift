@@ -4,16 +4,14 @@ import XCTest
 
 private actor Counter {
     private(set) var value = 0
-    func increment() { value += 1 }
+
+    func increment() {
+        value += 1
+    }
 }
 
 final class WhisperKitTranscriberTests: XCTestCase {
-    private var logDir: URL!
-    private var logFile: URL!
-
-    private func readLog() -> String {
-        (try? String(contentsOf: logFile, encoding: .utf8)) ?? ""
-    }
+    // MARK: Internal
 
     override func setUp() {
         super.setUp()
@@ -58,9 +56,9 @@ final class WhisperKitTranscriberTests: XCTestCase {
 
     func testTranscribeReturnsTextAndConfidenceFromEngine() async {
         let segment = SpeechSegment(audio: [], silenceBefore: .zero, duration: .zero, trailingSilenceAfter: .zero, endedBySilence: false)
-        let transcriber = WhisperKitTranscriber(engineProvider: {
+        let transcriber = WhisperKitTranscriber {
             { _, _ in ("hello world", [-0.5]) }
-        })
+        }
 
         let result = await transcriber.transcribe(segment)
 
@@ -73,9 +71,9 @@ final class WhisperKitTranscriberTests: XCTestCase {
     func testTranscribeEngineFailureReturnsEmptyDiscard() async {
         struct TestError: Error {}
         let segment = SpeechSegment(audio: [0.1, 0.2], silenceBefore: .zero, duration: .zero, trailingSilenceAfter: .zero, endedBySilence: false)
-        let transcriber = WhisperKitTranscriber(engineProvider: {
+        let transcriber = WhisperKitTranscriber {
             { _, _ in throw TestError() }
-        })
+        }
 
         let result = await transcriber.transcribe(segment)
 
@@ -86,10 +84,10 @@ final class WhisperKitTranscriberTests: XCTestCase {
     func testTranscribeEngineIsLoadedOnlyOnce() async {
         let counter = Counter()
         let segment = SpeechSegment(audio: [], silenceBefore: .zero, duration: .zero, trailingSilenceAfter: .zero, endedBySilence: false)
-        let transcriber = WhisperKitTranscriber(engineProvider: {
+        let transcriber = WhisperKitTranscriber {
             await counter.increment()
             return { _, _ in ("text", [0.0]) }
-        })
+        }
 
         _ = await transcriber.transcribe(segment)
         _ = await transcriber.transcribe(segment)
@@ -102,11 +100,11 @@ final class WhisperKitTranscriberTests: XCTestCase {
         let counter = Counter()
         let segment = SpeechSegment(audio: [0.1], silenceBefore: .zero, duration: .zero, trailingSilenceAfter: .zero, endedBySilence: false)
         let snapshot = SpeechCaptureSnapshot(audio: [0.1], duration: .milliseconds(300))
-        let transcriber = WhisperKitTranscriber(engineProvider: {
+        let transcriber = WhisperKitTranscriber {
             await counter.increment()
             try await Task.sleep(nanoseconds: 150_000_000)
             return { _, _ in ("shared load", [0.0]) }
-        })
+        }
 
         async let partialA = transcriber.transcribePartial(snapshot)
         async let partialB = transcriber.transcribePartial(snapshot)
@@ -138,9 +136,9 @@ final class WhisperKitTranscriberTests: XCTestCase {
 
     func testTranscribeTrimsWhitespace() async {
         let segment = SpeechSegment(audio: [], silenceBefore: .zero, duration: .zero, trailingSilenceAfter: .zero, endedBySilence: false)
-        let transcriber = WhisperKitTranscriber(engineProvider: {
+        let transcriber = WhisperKitTranscriber {
             { _, _ in ("  trimmed  ", [0.0]) }
-        })
+        }
 
         let result = await transcriber.transcribe(segment)
 
@@ -166,10 +164,16 @@ final class WhisperKitTranscriberTests: XCTestCase {
         let audio: [Float] = [0.1, 0.2, 0.3]
         let silence = Duration.milliseconds(2000)
         let duration = Duration.milliseconds(500)
-        let segment = SpeechSegment(audio: audio, silenceBefore: silence, duration: duration, trailingSilenceAfter: .milliseconds(800), endedBySilence: true)
-        let transcriber = WhisperKitTranscriber(engineProvider: {
+        let segment = SpeechSegment(
+            audio: audio,
+            silenceBefore: silence,
+            duration: duration,
+            trailingSilenceAfter: .milliseconds(800),
+            endedBySilence: true
+        )
+        let transcriber = WhisperKitTranscriber {
             { _, _ in ("ok", [0.0]) }
-        })
+        }
 
         let result = await transcriber.transcribe(segment)
 
@@ -189,5 +193,14 @@ final class WhisperKitTranscriberTests: XCTestCase {
     func testModelStorageURLIsUnderDotLocal() {
         let url = WhisperKitTranscriber.modelStorageURL
         XCTAssertTrue(url.path.contains(".local/share/egregore/models"))
+    }
+
+    // MARK: Private
+
+    private var logDir: URL!
+    private var logFile: URL!
+
+    private func readLog() -> String {
+        (try? String(contentsOf: logFile, encoding: .utf8)) ?? ""
     }
 }

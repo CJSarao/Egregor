@@ -2,27 +2,7 @@ import XCTest
 @testable import Egregore
 
 final class AudioPipelineTests: XCTestCase {
-
-    private static let SR = AVAudioEnginePipeline.outputSampleRate
-
-    // MARK: - Helpers
-
-    private func makePipeline() -> AVAudioEnginePipeline {
-        AVAudioEnginePipeline(tapInstaller: { _ in .init(start: {}, stop: {}) })
-    }
-
-    private func speechChunk(_ n: Int = 512) -> [Float] { [Float](repeating: 0.1, count: n) }
-    private func silenceChunk(_ n: Int = 512) -> [Float] { [Float](repeating: 0.0, count: n) }
-
-    private func speechChunksToMeetMinimum() -> Int {
-        let min = AVAudioEnginePipeline.minimumSpeechSamples
-        return (min / 512) + 1
-    }
-
-    private func silenceChunksToTriggerVAD() -> Int {
-        let threshold = AVAudioEnginePipeline.silenceSamplesThreshold
-        return (threshold / 512) + 1
-    }
+    // MARK: Internal
 
     // MARK: - computeRMS
 
@@ -48,11 +28,15 @@ final class AudioPipelineTests: XCTestCase {
         let pipeline = makePipeline()
         var iter = pipeline.segments.makeAsyncIterator()
 
-        let speechCount   = speechChunksToMeetMinimum()
-        let silenceCount  = silenceChunksToTriggerVAD()
+        let speechCount = speechChunksToMeetMinimum()
+        let silenceCount = silenceChunksToTriggerVAD()
 
-        for _ in 0..<speechCount  { await pipeline.processChunk(speechChunk()) }
-        for _ in 0..<silenceCount { await pipeline.processChunk(silenceChunk()) }
+        for _ in 0 ..< speechCount {
+            await pipeline.processChunk(speechChunk())
+        }
+        for _ in 0 ..< silenceCount {
+            await pipeline.processChunk(silenceChunk())
+        }
 
         let segment = await iter.next()
         XCTAssertNotNil(segment)
@@ -62,10 +46,14 @@ final class AudioPipelineTests: XCTestCase {
 
     func testSilenceOnlyNeverEmitsSegment() async {
         let pipeline = makePipeline()
-        for _ in 0..<50 { await pipeline.processChunk(silenceChunk()) }
+        for _ in 0 ..< 50 {
+            await pipeline.processChunk(silenceChunk())
+        }
         var count = 0
         let task = Task {
-            for await _ in pipeline.segments { count += 1 }
+            for await _ in pipeline.segments {
+                count += 1
+            }
         }
         try? await Task.sleep(for: .milliseconds(30))
         task.cancel()
@@ -82,7 +70,9 @@ final class AudioPipelineTests: XCTestCase {
 
         var count = 0
         let task = Task {
-            for await _ in pipeline.segments { count += 1 }
+            for await _ in pipeline.segments {
+                count += 1
+            }
         }
         try? await Task.sleep(for: .milliseconds(30))
         task.cancel()
@@ -96,7 +86,9 @@ final class AudioPipelineTests: XCTestCase {
         var iter = pipeline.segments.makeAsyncIterator()
 
         let n = speechChunksToMeetMinimum()
-        for _ in 0..<n { await pipeline.processChunk(speechChunk()) }
+        for _ in 0 ..< n {
+            await pipeline.processChunk(speechChunk())
+        }
         await pipeline.stop()
 
         let segment = await iter.next()!
@@ -110,9 +102,11 @@ final class AudioPipelineTests: XCTestCase {
         let pipeline = makePipeline()
         var iter = pipeline.segments.makeAsyncIterator()
 
-        let idleSamples = 3_200
+        let idleSamples = 3200
         await pipeline.processChunk(silenceChunk(idleSamples))
-        for _ in 0..<speechChunksToMeetMinimum() { await pipeline.processChunk(speechChunk()) }
+        for _ in 0 ..< speechChunksToMeetMinimum() {
+            await pipeline.processChunk(speechChunk())
+        }
         await pipeline.stop()
 
         let segment = await iter.next()!
@@ -127,7 +121,9 @@ final class AudioPipelineTests: XCTestCase {
         let pipeline = makePipeline()
         var iter = pipeline.segments.makeAsyncIterator()
 
-        for _ in 0..<speechChunksToMeetMinimum() { await pipeline.processChunk(speechChunk()) }
+        for _ in 0 ..< speechChunksToMeetMinimum() {
+            await pipeline.processChunk(speechChunk())
+        }
         await pipeline.stop()
 
         let segment = await iter.next()
@@ -140,7 +136,9 @@ final class AudioPipelineTests: XCTestCase {
 
         var count = 0
         let task = Task {
-            for await _ in pipeline.segments { count += 1 }
+            for await _ in pipeline.segments {
+                count += 1
+            }
         }
         try? await Task.sleep(for: .milliseconds(30))
         task.cancel()
@@ -156,12 +154,20 @@ final class AudioPipelineTests: XCTestCase {
         let sc = speechChunksToMeetMinimum()
         let vc = silenceChunksToTriggerVAD()
 
-        for _ in 0..<sc { await pipeline.processChunk(speechChunk()) }
-        for _ in 0..<vc { await pipeline.processChunk(silenceChunk()) }
-        for _ in 0..<sc { await pipeline.processChunk(speechChunk()) }
-        for _ in 0..<vc { await pipeline.processChunk(silenceChunk()) }
+        for _ in 0 ..< sc {
+            await pipeline.processChunk(speechChunk())
+        }
+        for _ in 0 ..< vc {
+            await pipeline.processChunk(silenceChunk())
+        }
+        for _ in 0 ..< sc {
+            await pipeline.processChunk(speechChunk())
+        }
+        for _ in 0 ..< vc {
+            await pipeline.processChunk(silenceChunk())
+        }
 
-        let first  = await iter.next()
+        let first = await iter.next()
         let second = await iter.next()
         XCTAssertNotNil(first)
         XCTAssertNotNil(second)
@@ -175,17 +181,25 @@ final class AudioPipelineTests: XCTestCase {
         let vc = silenceChunksToTriggerVAD()
         let extra = 10
 
-        for _ in 0..<sc { await pipeline.processChunk(speechChunk()) }
-        for _ in 0..<vc { await pipeline.processChunk(silenceChunk()) }
-        for _ in 0..<extra { await pipeline.processChunk(silenceChunk()) }
-        for _ in 0..<sc { await pipeline.processChunk(speechChunk()) }
+        for _ in 0 ..< sc {
+            await pipeline.processChunk(speechChunk())
+        }
+        for _ in 0 ..< vc {
+            await pipeline.processChunk(silenceChunk())
+        }
+        for _ in 0 ..< extra {
+            await pipeline.processChunk(silenceChunk())
+        }
+        for _ in 0 ..< sc {
+            await pipeline.processChunk(speechChunk())
+        }
         await pipeline.stop()
 
         _ = await iter.next()
         let second = await iter.next()!
 
         let trailingSamples = vc * 512
-        let extraSamples    = extra * 512
+        let extraSamples = extra * 512
         let expected = Duration.seconds(Double(trailingSamples + extraSamples) / Self.SR)
         XCTAssertEqual(second.silenceBefore, expected)
         XCTAssertEqual(second.trailingSilenceAfter, .zero)
@@ -198,7 +212,9 @@ final class AudioPipelineTests: XCTestCase {
         var iter = pipeline.segments.makeAsyncIterator()
 
         let n = speechChunksToMeetMinimum()
-        for _ in 0..<n { await pipeline.processChunk(speechChunk()) }
+        for _ in 0 ..< n {
+            await pipeline.processChunk(speechChunk())
+        }
         await pipeline.stop()
 
         let segment = await iter.next()!
@@ -210,12 +226,42 @@ final class AudioPipelineTests: XCTestCase {
         let pipeline = makePipeline()
         var iter = pipeline.segments.makeAsyncIterator()
 
-        for _ in 0..<speechChunksToMeetMinimum() { await pipeline.processChunk(speechChunk()) }
-        await pipeline.processChunk(silenceChunk(3_200))
+        for _ in 0 ..< speechChunksToMeetMinimum() {
+            await pipeline.processChunk(speechChunk())
+        }
+        await pipeline.processChunk(silenceChunk(3200))
         await pipeline.stop()
 
         let segment = await iter.next()!
         XCTAssertEqual(segment.trailingSilenceAfter, .milliseconds(200))
         XCTAssertEqual(segment.endedBySilence, false)
+    }
+
+    // MARK: Private
+
+    private static let SR = AVAudioEnginePipeline.outputSampleRate
+
+    // MARK: - Helpers
+
+    private func makePipeline() -> AVAudioEnginePipeline {
+        AVAudioEnginePipeline(tapInstaller: { _ in .init(start: {}, stop: {}) })
+    }
+
+    private func speechChunk(_ n: Int = 512) -> [Float] {
+        [Float](repeating: 0.1, count: n)
+    }
+
+    private func silenceChunk(_ n: Int = 512) -> [Float] {
+        [Float](repeating: 0.0, count: n)
+    }
+
+    private func speechChunksToMeetMinimum() -> Int {
+        let min = AVAudioEnginePipeline.minimumSpeechSamples
+        return (min / 512) + 1
+    }
+
+    private func silenceChunksToTriggerVAD() -> Int {
+        let threshold = AVAudioEnginePipeline.silenceSamplesThreshold
+        return (threshold / 512) + 1
     }
 }

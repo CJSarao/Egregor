@@ -2,9 +2,7 @@ import XCTest
 @testable import Egregore
 
 final class RuntimeLoggerTests: XCTestCase {
-
-    private var logDir: URL!
-    private var logFile: URL!
+    // MARK: Internal
 
     override func setUp() {
         logDir = FileManager.default.temporaryDirectory
@@ -16,27 +14,27 @@ final class RuntimeLoggerTests: XCTestCase {
         try? FileManager.default.removeItem(at: logDir)
     }
 
-    func testLogWritesTimestampedEntry() {
+    func testLogWritesTimestampedEntry() throws {
         let logger = RuntimeLogger(fileURL: logFile)
         logger.log("hello world", category: .general)
-        let contents = try! String(contentsOf: logFile, encoding: .utf8)
+        let contents = try String(contentsOf: logFile, encoding: .utf8)
         XCTAssertTrue(contents.contains("[general] hello world"))
         XCTAssertTrue(contents.contains("[20"))
     }
 
-    func testErrorWritesErrorPrefix() {
+    func testErrorWritesErrorPrefix() throws {
         let logger = RuntimeLogger(fileURL: logFile)
         logger.error("pipe failed", category: .output)
-        let contents = try! String(contentsOf: logFile, encoding: .utf8)
+        let contents = try String(contentsOf: logFile, encoding: .utf8)
         XCTAssertTrue(contents.contains("[ERROR:output] pipe failed"))
     }
 
-    func testMultipleEntriesAppend() {
+    func testMultipleEntriesAppend() throws {
         let logger = RuntimeLogger(fileURL: logFile)
         logger.log("first", category: .session)
         logger.log("second", category: .hotkey)
         logger.error("third", category: .transcriber)
-        let lines = try! String(contentsOf: logFile, encoding: .utf8)
+        let lines = try String(contentsOf: logFile, encoding: .utf8)
             .components(separatedBy: "\n")
             .filter { !$0.isEmpty }
         XCTAssertEqual(lines.count, 3)
@@ -49,4 +47,9 @@ final class RuntimeLoggerTests: XCTestCase {
         let path = RuntimeLogger.logDirectoryURL.path(percentEncoded: false)
         XCTAssertTrue(path.hasSuffix(".local/share/egregore/logs/"))
     }
+
+    // MARK: Private
+
+    private var logDir: URL!
+    private var logFile: URL!
 }

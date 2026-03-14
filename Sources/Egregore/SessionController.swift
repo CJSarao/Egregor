@@ -1,23 +1,7 @@
 import Foundation
 
 actor SessionController {
-
-    private let hotkeys: any HotkeyManager
-    private let pipeline: any AudioPipeline
-    private let transcriber: any Transcriber
-    private let resolver: any IntentResolver
-    private let output: any OutputManager
-    private let textNormalizer: TerminalTextNormalizer
-    private let log: RuntimeLogger
-
-    private var isMicOpen = false
-    private var acceptsPartialUpdates = false
-    private var pendingSnapshot: SpeechCaptureSnapshot?
-    private var lastLiveTranscript: String?
-    private var partialTask: Task<Void, Never>?
-
-    nonisolated let hudStates: AsyncStream<HUDState>
-    private let hudContinuation: AsyncStream<HUDState>.Continuation
+    // MARK: Lifecycle
 
     init(
         hotkeys: any HotkeyManager,
@@ -34,12 +18,16 @@ actor SessionController {
         self.resolver = resolver
         self.output = output
         self.textNormalizer = textNormalizer
-        self.log = logger
+        log = logger
 
         var cont: AsyncStream<HUDState>.Continuation!
         hudStates = AsyncStream { cont = $0 }
         hudContinuation = cont!
     }
+
+    // MARK: Internal
+
+    nonisolated let hudStates: AsyncStream<HUDState>
 
     func start() {
         Task { await runHotkeyLoop() }
@@ -47,6 +35,25 @@ actor SessionController {
         Task { await runCaptureSnapshotLoop() }
         Task { await runPartialStreamLoop() }
     }
+
+    // MARK: Private
+
+    private let hotkeys: any HotkeyManager
+    private let pipeline: any AudioPipeline
+    private let transcriber: any Transcriber
+    private let resolver: any IntentResolver
+    private let output: any OutputManager
+    private let textNormalizer: TerminalTextNormalizer
+    private let log: RuntimeLogger
+
+    private var isMicOpen = false
+    private var isToggling = false
+    private var acceptsPartialUpdates = false
+    private var pendingSnapshot: SpeechCaptureSnapshot?
+    private var lastLiveTranscript: String?
+    private var partialTask: Task<Void, Never>?
+
+    private let hudContinuation: AsyncStream<HUDState>.Continuation
 
     private func runHotkeyLoop() async {
         for await event in hotkeys.events {
@@ -58,6 +65,12 @@ actor SessionController {
         log.log("hotkey event: \(event)", category: .session)
         switch event {
         case .toggle:
+            guard !isToggling else {
+                log.log("toggle ignored: already toggling", category: .session)
+                return
+            }
+            isToggling = true
+            defer { isToggling = false }
             if isMicOpen {
                 isMicOpen = false
                 stopCurrentUtterance()
@@ -76,7 +89,9 @@ actor SessionController {
 
     private func runCaptureSnapshotLoop() async {
         for await snapshot in pipeline.captureSnapshots {
-            guard isMicOpen, acceptsPartialUpdates else { continue }
+            guard isMicOpen, acceptsPartialUpdates else {
+                continue
+            }
             pendingSnapshot = snapshot
             ensurePartialWorker()
         }
@@ -84,9 +99,13 @@ actor SessionController {
 
     private func runPartialStreamLoop() async {
         for await text in transcriber.partialTextStream {
-            guard isMicOpen, acceptsPartialUpdates else { continue }
+            guard isMicOpen, acceptsPartialUpdates else {
+                continue
+            }
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, trimmed != lastLiveTranscript else { continue }
+            guard !trimmed.isEmpty, trimmed != lastLiveTranscript else {
+                continue
+            }
             lastLiveTranscript = trimmed
             hudContinuation.yield(.recording(partialText: trimmed))
         }
@@ -94,23 +113,30 @@ actor SessionController {
 
     private func runSegmentLoop() async {
         for await segment in pipeline.segments {
-            guard isMicOpen else { continue }
+            guard isMicOpen else {
+                continue
+            }
             stopCurrentUtterance()
-            log.log("segment received: duration=\(segment.duration), silenceBefore=\(segment.silenceBefore), trailingSilenceAfter=\(segment.trailingSilenceAfter), endedBySilence=\(segment.endedBySilence)", category: .session)
+            log.log(
+                "segment received: duration=\(segment.duration), silenceBefore=\(segment.silenceBefore), trailingSilenceAfter=\(segment.trailingSilenceAfter), endedBySilence=\(segment.endedBySilence)",
+                category: .session
+            )
             hudContinuation.yield(.transcribing(lastText: lastLiveTranscript))
             let result = await transcriber.transcribe(segment)
             log.log("transcription: chars=\(result.text.count) confidence=\(result.confidence)", category: .session)
             let intent = resolver.resolve(result)
             log.log("resolved intent: \(intent)", category: .session)
             dispatch(intent, result: result)
-            if isMicOpen { beginListeningCycle() }
+            if isMicOpen {
+                beginListeningCycle()
+            }
         }
     }
 
     private func dispatch(_ intent: Intent, result: TranscriptionResult) {
         let continueListening = isMicOpen
         switch intent {
-        case .inject(let text):
+        case let .inject(text):
             let normalized = textNormalizer.normalizeForInjection(text)
             guard !normalized.isEmpty else {
                 log.log("dispatch: inject normalized to empty text, dropping utterance", category: .session)
@@ -122,28 +148,32 @@ actor SessionController {
             case .success:
                 log.log("dispatch: append handed to output manager", category: .session)
                 hudContinuation.yield(.injected(normalized, continueListening: continueListening))
-            case .failure(let message):
+
+            case let .failure(message):
                 log.error("dispatch: append failed: \(message)", category: .session)
                 hudContinuation.yield(.error(message, continueListening: continueListening))
             }
+
         case .command(.roger):
             log.log("dispatch: ROGER → send (confidence=\(result.confidence))", category: .session)
             switch output.send() {
             case .success:
                 hudContinuation.yield(.injected("⏎", continueListening: continueListening))
-            case .failure(let message):
+            case let .failure(message):
                 log.error("dispatch: send failed: \(message)", category: .session)
                 hudContinuation.yield(.error(message, continueListening: continueListening))
             }
+
         case .command(.abort):
             log.log("dispatch: ABORT → clear (confidence=\(result.confidence))", category: .session)
             switch output.clear() {
             case .success:
                 hudContinuation.yield(.cleared(continueListening: continueListening))
-            case .failure(let message):
+            case let .failure(message):
                 log.error("dispatch: clear failed: \(message)", category: .session)
                 hudContinuation.yield(.error(message, continueListening: continueListening))
             }
+
         case .discard:
             log.log("dispatch: discard chars=\(result.text.count) confidence=\(result.confidence)", category: .session)
             hudContinuation.yield(continueListening ? .listening : .idle)
@@ -164,7 +194,9 @@ actor SessionController {
     }
 
     private func ensurePartialWorker() {
-        guard partialTask == nil else { return }
+        guard partialTask == nil else {
+            return
+        }
         partialTask = Task {
             await self.runPartialWorkerLoop()
         }

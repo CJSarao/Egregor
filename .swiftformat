@@ -1,0 +1,68 @@
+# SwiftFormat configuration — strict, opinionated
+# Run: swiftformat Sources/ Tests/
+
+--swiftversion 6.0
+
+# File scope
+--exclude .build,.claude
+
+# Indentation
+--indent 4
+--indentcase false
+--ifdef indent
+--xcodeindentation disabled
+
+# Wrapping
+--maxwidth 150
+--wraparguments before-first
+--wrapparameters before-first
+--wrapcollections before-first
+--wrapconditions after-first
+--wrapreturntype preserve
+--wraptypealiases preserve
+--closingparen balanced
+
+# Spacing
+--trimwhitespace always
+--stripunusedargs closure-only
+--commas always
+--semicolons never
+--operatorfunc spaced
+--nospaceoperators
+--ranges spaced
+
+# Braces
+--allman false
+--elseposition same-line
+--guardelse next-line
+
+# Types
+--self remove
+--importgrouping alpha
+--extensionacl on-declarations
+
+# Other
+--header strip
+--marktypes never
+--markextensions never
+--typeattributes prev-line
+--funcattributes prev-line
+--varattributes preserve
+
+# Enable strict rules
+--enable acronyms
+--enable blankLineAfterSwitchCase
+--enable blockComments
+--enable isEmpty
+--enable markTypes
+--enable organizeDeclarations
+--enable sortSwitchCases
+--enable wrapConditionalBodies
+--enable wrapEnumCases
+--enable wrapSwitchCases
+
+# Disable rules that conflict with project style
+--disable sortImports
+--disable wrapMultilineStatementBraces
+--disable assertionFailures
+--disable noForceUnwrapInTests

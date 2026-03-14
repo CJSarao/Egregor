@@ -4,8 +4,7 @@ import XCTest
 // MARK: - Test doubles
 
 final class MockHotkeyManager: HotkeyManager, @unchecked Sendable {
-    nonisolated let events: AsyncStream<HotkeyEvent>
-    private let cont: AsyncStream<HotkeyEvent>.Continuation
+    // MARK: Lifecycle
 
     init() {
         var cont: AsyncStream<HotkeyEvent>.Continuation!
@@ -13,17 +12,21 @@ final class MockHotkeyManager: HotkeyManager, @unchecked Sendable {
         self.cont = cont!
     }
 
-    func emit(_ event: HotkeyEvent) { cont.yield(event) }
+    // MARK: Internal
+
+    nonisolated let events: AsyncStream<HotkeyEvent>
+
+    func emit(_ event: HotkeyEvent) {
+        cont.yield(event)
+    }
+
+    // MARK: Private
+
+    private let cont: AsyncStream<HotkeyEvent>.Continuation
 }
 
 actor MockAudioPipeline: AudioPipeline {
-    nonisolated let segments: AsyncStream<SpeechSegment>
-    private let segCont: AsyncStream<SpeechSegment>.Continuation
-    nonisolated let captureSnapshots: AsyncStream<SpeechCaptureSnapshot>
-    private let snapshotCont: AsyncStream<SpeechCaptureSnapshot>.Continuation
-
-    private(set) var startCount = 0
-    private(set) var stopCount = 0
+    // MARK: Lifecycle
 
     init() {
         var segmentCont: AsyncStream<SpeechSegment>.Continuation!
@@ -34,19 +37,37 @@ actor MockAudioPipeline: AudioPipeline {
         snapshotCont = partialCont!
     }
 
-    func start() { startCount += 1 }
-    func stop()  { stopCount  += 1 }
+    // MARK: Internal
 
-    func emitSegment(_ seg: SpeechSegment)    { segCont.yield(seg) }
-    func emitSnapshot(_ snapshot: SpeechCaptureSnapshot) { snapshotCont.yield(snapshot) }
+    nonisolated let segments: AsyncStream<SpeechSegment>
+    nonisolated let captureSnapshots: AsyncStream<SpeechCaptureSnapshot>
+    private(set) var startCount = 0
+    private(set) var stopCount = 0
+
+    func start() {
+        startCount += 1
+    }
+
+    func stop() {
+        stopCount += 1
+    }
+
+    func emitSegment(_ seg: SpeechSegment) {
+        segCont.yield(seg)
+    }
+
+    func emitSnapshot(_ snapshot: SpeechCaptureSnapshot) {
+        snapshotCont.yield(snapshot)
+    }
+
+    // MARK: Private
+
+    private let segCont: AsyncStream<SpeechSegment>.Continuation
+    private let snapshotCont: AsyncStream<SpeechCaptureSnapshot>.Continuation
 }
 
 final class MockTranscriber: Transcriber, @unchecked Sendable {
-    var result: TranscriptionResult
-    var partialText = ""
-
-    nonisolated let partialTextStream: AsyncStream<String>
-    private let partialContinuation: AsyncStream<String>.Continuation
+    // MARK: Lifecycle
 
     init(_ result: TranscriptionResult) {
         self.result = result
@@ -55,22 +76,41 @@ final class MockTranscriber: Transcriber, @unchecked Sendable {
         partialContinuation = cont!
     }
 
-    func emitPartial(_ text: String) { partialContinuation.yield(text) }
-    func transcribePartial(_ snapshot: SpeechCaptureSnapshot) async -> String { partialText }
-    func transcribe(_ segment: SpeechSegment) async -> TranscriptionResult { result }
+    // MARK: Internal
+
+    var result: TranscriptionResult
+    var partialText = ""
+
+    nonisolated let partialTextStream: AsyncStream<String>
+
+    func emitPartial(_ text: String) {
+        partialContinuation.yield(text)
+    }
+
+    func transcribePartial(_ snapshot: SpeechCaptureSnapshot) async -> String {
+        partialText
+    }
+
+    func transcribe(_ segment: SpeechSegment) async -> TranscriptionResult {
+        result
+    }
+
+    // MARK: Private
+
+    private let partialContinuation: AsyncStream<String>.Continuation
 }
 
 final class MockOutputManager: OutputManager, @unchecked Sendable {
     private(set) var appended: [String] = []
-    private(set) var sendCount  = 0
+    private(set) var sendCount = 0
     private(set) var clearCount = 0
     var appendResult: OutputResult = .success
     var sendResult: OutputResult = .success
     var clearResult: OutputResult = .success
 
     var onAppend: ((String) -> Void)?
-    var onSend:   (() -> Void)?
-    var onClear:  (() -> Void)?
+    var onSend: (() -> Void)?
+    var onClear: (() -> Void)?
 
     func append(_ text: String) -> OutputResult {
         appended.append(text)
@@ -99,11 +139,13 @@ private func makeSpeechSegment(
     trailingSilenceAfter: Duration = .zero,
     endedBySilence: Bool = false
 ) -> SpeechSegment {
-    SpeechSegment(audio: [Float](repeating: 0.1, count: 1600),
-                  silenceBefore: silenceBefore,
-                  duration: duration,
-                  trailingSilenceAfter: trailingSilenceAfter,
-                  endedBySilence: endedBySilence)
+    SpeechSegment(
+        audio: [Float](repeating: 0.1, count: 1600),
+        silenceBefore: silenceBefore,
+        duration: duration,
+        trailingSilenceAfter: trailingSilenceAfter,
+        endedBySilence: endedBySilence
+    )
 }
 
 private func makeCaptureSnapshot(
@@ -120,18 +162,21 @@ private func makeTranscriptionResult(
     trailingSilenceAfter: Duration = .zero,
     endedBySilence: Bool = false
 ) -> TranscriptionResult {
-    TranscriptionResult(text: text,
-                        confidence: confidence,
-                        segment: makeSpeechSegment(silenceBefore: silenceBefore,
-                                                  duration: duration,
-                                                  trailingSilenceAfter: trailingSilenceAfter,
-                                                  endedBySilence: endedBySilence))
+    TranscriptionResult(
+        text: text,
+        confidence: confidence,
+        segment: makeSpeechSegment(
+            silenceBefore: silenceBefore,
+            duration: duration,
+            trailingSilenceAfter: trailingSilenceAfter,
+            endedBySilence: endedBySilence
+        )
+    )
 }
 
 // MARK: - Tests
 
 final class SessionControllerIntegrationTests: XCTestCase {
-
     // MARK: Toggle on → dictation inject
 
     func testToggleOnDictationAppendsTranscribedText() async throws {
@@ -139,11 +184,16 @@ final class SessionControllerIntegrationTests: XCTestCase {
         let exp = expectation(description: "append called")
         output.onAppend = { _ in exp.fulfill() }
 
-        let hotkeys  = MockHotkeyManager()
+        let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
-        let txr      = MockTranscriber(makeTranscriptionResult(text: "git status"))
-        let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        let txr = MockTranscriber(makeTranscriptionResult(text: "git status"))
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
         await ctrl.start()
 
         hotkeys.emit(.toggle)
@@ -160,17 +210,22 @@ final class SessionControllerIntegrationTests: XCTestCase {
 
     func testDictationDiscardIsNoOp() async throws {
         let output = MockOutputManager()
-        let exp    = expectation(description: "no append")
+        let exp = expectation(description: "no append")
         exp.isInverted = true
         output.onAppend = { _ in exp.fulfill() }
-        output.onSend   = { exp.fulfill() }
-        output.onClear  = { exp.fulfill() }
+        output.onSend = { exp.fulfill() }
+        output.onClear = { exp.fulfill() }
 
-        let hotkeys  = MockHotkeyManager()
+        let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
-        let txr      = MockTranscriber(makeTranscriptionResult(text: "noise", confidence: 0.05))
-        let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        let txr = MockTranscriber(makeTranscriptionResult(text: "noise", confidence: 0.05))
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
         await ctrl.start()
 
         hotkeys.emit(.toggle)
@@ -186,12 +241,17 @@ final class SessionControllerIntegrationTests: XCTestCase {
     // MARK: Toggle starts and stops pipeline
 
     func testToggleOnStartsPipeline() async throws {
-        let hotkeys  = MockHotkeyManager()
+        let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
-        let txr      = MockTranscriber(makeTranscriptionResult(text: ""))
-        let output   = MockOutputManager()
-        let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        let txr = MockTranscriber(makeTranscriptionResult(text: ""))
+        let output = MockOutputManager()
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
         await ctrl.start()
 
         hotkeys.emit(.toggle)
@@ -202,12 +262,17 @@ final class SessionControllerIntegrationTests: XCTestCase {
     }
 
     func testToggleTwiceStopsPipeline() async throws {
-        let hotkeys  = MockHotkeyManager()
+        let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
-        let txr      = MockTranscriber(makeTranscriptionResult(text: ""))
-        let output   = MockOutputManager()
-        let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        let txr = MockTranscriber(makeTranscriptionResult(text: ""))
+        let output = MockOutputManager()
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
         await ctrl.start()
 
         hotkeys.emit(.toggle)
@@ -222,26 +287,35 @@ final class SessionControllerIntegrationTests: XCTestCase {
 
     func testNormalUtteranceAppends() async throws {
         let output = MockOutputManager()
-        let exp    = expectation(description: "append called")
+        let exp = expectation(description: "append called")
         output.onAppend = { _ in exp.fulfill() }
 
-        let hotkeys  = MockHotkeyManager()
+        let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
-        let txr = MockTranscriber(makeTranscriptionResult(text: "ls -la",
-                                                          silenceBefore: .milliseconds(200),
-                                                          duration: .milliseconds(800),
-                                                          trailingSilenceAfter: .milliseconds(900),
-                                                          endedBySilence: true))
-        let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        let txr = MockTranscriber(makeTranscriptionResult(
+            text: "ls -la",
+            silenceBefore: .milliseconds(200),
+            duration: .milliseconds(800),
+            trailingSilenceAfter: .milliseconds(900),
+            endedBySilence: true
+        ))
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
         await ctrl.start()
 
         hotkeys.emit(.toggle)
         try await Task.sleep(nanoseconds: 30_000_000)
-        await pipeline.emitSegment(makeSpeechSegment(silenceBefore: .milliseconds(200),
-                                                     duration: .milliseconds(800),
-                                                     trailingSilenceAfter: .milliseconds(900),
-                                                     endedBySilence: true))
+        await pipeline.emitSegment(makeSpeechSegment(
+            silenceBefore: .milliseconds(200),
+            duration: .milliseconds(800),
+            trailingSilenceAfter: .milliseconds(900),
+            endedBySilence: true
+        ))
 
         await fulfillment(of: [exp], timeout: 2)
         XCTAssertEqual(output.appended, ["ls -la"])
@@ -276,26 +350,35 @@ final class SessionControllerIntegrationTests: XCTestCase {
 
     func testIsolatedRogerCallsSend() async throws {
         let output = MockOutputManager()
-        let exp    = expectation(description: "send called")
+        let exp = expectation(description: "send called")
         output.onSend = { exp.fulfill() }
 
-        let hotkeys  = MockHotkeyManager()
+        let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
-        let txr = MockTranscriber(makeTranscriptionResult(text: "ROGER",
-                                                          silenceBefore: .milliseconds(2000),
-                                                          duration: .milliseconds(800),
-                                                          trailingSilenceAfter: .milliseconds(900),
-                                                          endedBySilence: true))
-        let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        let txr = MockTranscriber(makeTranscriptionResult(
+            text: "ROGER",
+            silenceBefore: .milliseconds(2000),
+            duration: .milliseconds(800),
+            trailingSilenceAfter: .milliseconds(900),
+            endedBySilence: true
+        ))
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
         await ctrl.start()
 
         hotkeys.emit(.toggle)
         try await Task.sleep(nanoseconds: 30_000_000)
-        await pipeline.emitSegment(makeSpeechSegment(silenceBefore: .milliseconds(2000),
-                                                     duration: .milliseconds(800),
-                                                     trailingSilenceAfter: .milliseconds(900),
-                                                     endedBySilence: true))
+        await pipeline.emitSegment(makeSpeechSegment(
+            silenceBefore: .milliseconds(2000),
+            duration: .milliseconds(800),
+            trailingSilenceAfter: .milliseconds(900),
+            endedBySilence: true
+        ))
 
         await fulfillment(of: [exp], timeout: 2)
         XCTAssertEqual(output.sendCount, 1)
@@ -306,26 +389,35 @@ final class SessionControllerIntegrationTests: XCTestCase {
 
     func testIsolatedAbortCallsClear() async throws {
         let output = MockOutputManager()
-        let exp    = expectation(description: "clear called")
+        let exp = expectation(description: "clear called")
         output.onClear = { exp.fulfill() }
 
-        let hotkeys  = MockHotkeyManager()
+        let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
-        let txr = MockTranscriber(makeTranscriptionResult(text: "ABORT",
-                                                          silenceBefore: .milliseconds(2000),
-                                                          duration: .milliseconds(800),
-                                                          trailingSilenceAfter: .milliseconds(900),
-                                                          endedBySilence: true))
-        let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        let txr = MockTranscriber(makeTranscriptionResult(
+            text: "ABORT",
+            silenceBefore: .milliseconds(2000),
+            duration: .milliseconds(800),
+            trailingSilenceAfter: .milliseconds(900),
+            endedBySilence: true
+        ))
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
         await ctrl.start()
 
         hotkeys.emit(.toggle)
         try await Task.sleep(nanoseconds: 30_000_000)
-        await pipeline.emitSegment(makeSpeechSegment(silenceBefore: .milliseconds(2000),
-                                                     duration: .milliseconds(800),
-                                                     trailingSilenceAfter: .milliseconds(900),
-                                                     endedBySilence: true))
+        await pipeline.emitSegment(makeSpeechSegment(
+            silenceBefore: .milliseconds(2000),
+            duration: .milliseconds(800),
+            trailingSilenceAfter: .milliseconds(900),
+            endedBySilence: true
+        ))
 
         await fulfillment(of: [exp], timeout: 2)
         XCTAssertEqual(output.clearCount, 1)
@@ -336,26 +428,35 @@ final class SessionControllerIntegrationTests: XCTestCase {
 
     func testRelaxedTimingRogerCallsSend() async throws {
         let output = MockOutputManager()
-        let exp    = expectation(description: "send called with relaxed timing")
+        let exp = expectation(description: "send called with relaxed timing")
         output.onSend = { exp.fulfill() }
 
-        let hotkeys  = MockHotkeyManager()
+        let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
-        let txr = MockTranscriber(makeTranscriptionResult(text: "ROGER",
-                                                          silenceBefore: .milliseconds(200),
-                                                          duration: .milliseconds(600),
-                                                          trailingSilenceAfter: .milliseconds(100),
-                                                          endedBySilence: true))
-        let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        let txr = MockTranscriber(makeTranscriptionResult(
+            text: "ROGER",
+            silenceBefore: .milliseconds(200),
+            duration: .milliseconds(600),
+            trailingSilenceAfter: .milliseconds(100),
+            endedBySilence: true
+        ))
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
         await ctrl.start()
 
         hotkeys.emit(.toggle)
         try await Task.sleep(nanoseconds: 30_000_000)
-        await pipeline.emitSegment(makeSpeechSegment(silenceBefore: .milliseconds(200),
-                                                     duration: .milliseconds(600),
-                                                     trailingSilenceAfter: .milliseconds(100),
-                                                     endedBySilence: true))
+        await pipeline.emitSegment(makeSpeechSegment(
+            silenceBefore: .milliseconds(200),
+            duration: .milliseconds(600),
+            trailingSilenceAfter: .milliseconds(100),
+            endedBySilence: true
+        ))
 
         await fulfillment(of: [exp], timeout: 2)
         XCTAssertEqual(output.sendCount, 1)
@@ -366,26 +467,35 @@ final class SessionControllerIntegrationTests: XCTestCase {
 
     func testMinimalTimingRogerCallsSend() async throws {
         let output = MockOutputManager()
-        let exp    = expectation(description: "send called with minimal timing")
+        let exp = expectation(description: "send called with minimal timing")
         output.onSend = { exp.fulfill() }
 
-        let hotkeys  = MockHotkeyManager()
+        let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
-        let txr = MockTranscriber(makeTranscriptionResult(text: "ROGER",
-                                                          silenceBefore: .milliseconds(100),
-                                                          duration: .milliseconds(600),
-                                                          trailingSilenceAfter: .milliseconds(50),
-                                                          endedBySilence: true))
-        let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        let txr = MockTranscriber(makeTranscriptionResult(
+            text: "ROGER",
+            silenceBefore: .milliseconds(100),
+            duration: .milliseconds(600),
+            trailingSilenceAfter: .milliseconds(50),
+            endedBySilence: true
+        ))
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
         await ctrl.start()
 
         hotkeys.emit(.toggle)
         try await Task.sleep(nanoseconds: 30_000_000)
-        await pipeline.emitSegment(makeSpeechSegment(silenceBefore: .milliseconds(100),
-                                                     duration: .milliseconds(600),
-                                                     trailingSilenceAfter: .milliseconds(50),
-                                                     endedBySilence: true))
+        await pipeline.emitSegment(makeSpeechSegment(
+            silenceBefore: .milliseconds(100),
+            duration: .milliseconds(600),
+            trailingSilenceAfter: .milliseconds(50),
+            endedBySilence: true
+        ))
 
         await fulfillment(of: [exp], timeout: 2)
         XCTAssertEqual(output.sendCount, 1)
@@ -396,26 +506,35 @@ final class SessionControllerIntegrationTests: XCTestCase {
 
     func testMinimalTimingAbortCallsClear() async throws {
         let output = MockOutputManager()
-        let exp    = expectation(description: "clear called with minimal timing")
+        let exp = expectation(description: "clear called with minimal timing")
         output.onClear = { exp.fulfill() }
 
-        let hotkeys  = MockHotkeyManager()
+        let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
-        let txr = MockTranscriber(makeTranscriptionResult(text: "ABORT",
-                                                          silenceBefore: .milliseconds(100),
-                                                          duration: .milliseconds(500),
-                                                          trailingSilenceAfter: .milliseconds(50),
-                                                          endedBySilence: true))
-        let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        let txr = MockTranscriber(makeTranscriptionResult(
+            text: "ABORT",
+            silenceBefore: .milliseconds(100),
+            duration: .milliseconds(500),
+            trailingSilenceAfter: .milliseconds(50),
+            endedBySilence: true
+        ))
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
         await ctrl.start()
 
         hotkeys.emit(.toggle)
         try await Task.sleep(nanoseconds: 30_000_000)
-        await pipeline.emitSegment(makeSpeechSegment(silenceBefore: .milliseconds(100),
-                                                     duration: .milliseconds(500),
-                                                     trailingSilenceAfter: .milliseconds(50),
-                                                     endedBySilence: true))
+        await pipeline.emitSegment(makeSpeechSegment(
+            silenceBefore: .milliseconds(100),
+            duration: .milliseconds(500),
+            trailingSilenceAfter: .milliseconds(50),
+            endedBySilence: true
+        ))
 
         await fulfillment(of: [exp], timeout: 2)
         XCTAssertEqual(output.clearCount, 1)
@@ -426,26 +545,35 @@ final class SessionControllerIntegrationTests: XCTestCase {
 
     func testRogerInPhraseInjectsAsText() async throws {
         let output = MockOutputManager()
-        let exp    = expectation(description: "append called for ROGER phrase")
+        let exp = expectation(description: "append called for ROGER phrase")
         output.onAppend = { _ in exp.fulfill() }
 
-        let hotkeys  = MockHotkeyManager()
+        let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
-        let txr = MockTranscriber(makeTranscriptionResult(text: "ROGER that",
-                                                          silenceBefore: .milliseconds(200),
-                                                          duration: .milliseconds(2500),
-                                                          trailingSilenceAfter: .milliseconds(900),
-                                                          endedBySilence: true))
-        let ctrl = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                     transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        let txr = MockTranscriber(makeTranscriptionResult(
+            text: "ROGER that",
+            silenceBefore: .milliseconds(200),
+            duration: .milliseconds(2500),
+            trailingSilenceAfter: .milliseconds(900),
+            endedBySilence: true
+        ))
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
         await ctrl.start()
 
         hotkeys.emit(.toggle)
         try await Task.sleep(nanoseconds: 30_000_000)
-        await pipeline.emitSegment(makeSpeechSegment(silenceBefore: .milliseconds(200),
-                                                     duration: .milliseconds(2500),
-                                                     trailingSilenceAfter: .milliseconds(900),
-                                                     endedBySilence: true))
+        await pipeline.emitSegment(makeSpeechSegment(
+            silenceBefore: .milliseconds(200),
+            duration: .milliseconds(2500),
+            trailingSilenceAfter: .milliseconds(900),
+            endedBySilence: true
+        ))
 
         await fulfillment(of: [exp], timeout: 2)
         XCTAssertEqual(output.appended, ["ROGER that"])

@@ -49,11 +49,13 @@ final class IntentResolverTests: XCTestCase {
     }
 
     func testVocabularyInjectsWhenUtteranceDidNotEndBySilence() {
-        let result = makeResult(text: "ROGER",
-                                silenceBefore: .milliseconds(2000),
-                                duration: .milliseconds(800),
-                                trailingSilenceAfter: .milliseconds(200),
-                                endedBySilence: false)
+        let result = makeResult(
+            text: "ROGER",
+            silenceBefore: .milliseconds(2000),
+            duration: .milliseconds(800),
+            trailingSilenceAfter: .milliseconds(200),
+            endedBySilence: false
+        )
         XCTAssertEqual(resolver.resolve(result), .inject("ROGER"))
     }
 
@@ -95,18 +97,22 @@ final class IntentResolverTests: XCTestCase {
     }
 
     func testVocabularyWithLowTrailingSilenceStillResolvesCommand() {
-        let result = makeResult(text: "ROGER",
-                                silenceBefore: .milliseconds(2000),
-                                duration: .milliseconds(800),
-                                trailingSilenceAfter: .milliseconds(100))
+        let result = makeResult(
+            text: "ROGER",
+            silenceBefore: .milliseconds(2000),
+            duration: .milliseconds(800),
+            trailingSilenceAfter: .milliseconds(100)
+        )
         XCTAssertEqual(resolver.resolve(result), .command(.roger))
     }
 
     func testVocabularyNotEndedBySilenceInjects() {
-        let result = makeResult(text: "ROGER",
-                                silenceBefore: .milliseconds(2000),
-                                duration: .milliseconds(800),
-                                endedBySilence: false)
+        let result = makeResult(
+            text: "ROGER",
+            silenceBefore: .milliseconds(2000),
+            duration: .milliseconds(800),
+            endedBySilence: false
+        )
         XCTAssertEqual(resolver.resolve(result), .inject("ROGER"))
     }
 
@@ -156,7 +162,7 @@ final class IntentResolverTests: XCTestCase {
 }
 
 final class TerminalTextNormalizerTests: XCTestCase {
-    private let normalizer = TerminalTextNormalizer()
+    // MARK: Internal
 
     func testStripsTrailingCommandPunctuation() {
         XCTAssertEqual(normalizer.normalizeForInjection("git status."), "git status")
@@ -172,15 +178,19 @@ final class TerminalTextNormalizerTests: XCTestCase {
     func testTrimsWhitespaceWhileNormalizing() {
         XCTAssertEqual(normalizer.normalizeForInjection("  git status.  "), "git status")
     }
+
+    // MARK: Private
+
+    private let normalizer = TerminalTextNormalizer()
 }
 
 extension Intent: Equatable {
     public static func == (lhs: Intent, rhs: Intent) -> Bool {
         switch (lhs, rhs) {
-        case (.discard, .discard): return true
-        case (.inject(let a), .inject(let b)): return a == b
-        case (.command(let a), .command(let b)): return a == b
-        default: return false
+        case (.discard, .discard): true
+        case let (.inject(a), .inject(b)): a == b
+        case let (.command(a), .command(b)): a == b
+        default: false
         }
     }
 }

@@ -2,74 +2,22 @@ import XCTest
 @testable import Egregore
 
 final class HUDStateTests: XCTestCase {
-
-    // MARK: - Helpers
-
-    private func makeSpeechSegment(
-        silenceBefore: Duration = .milliseconds(2000),
-        duration: Duration = .milliseconds(800),
-        trailingSilenceAfter: Duration = .zero,
-        endedBySilence: Bool = false
-    ) -> SpeechSegment {
-        SpeechSegment(audio: [Float](repeating: 0.1, count: 1600),
-                      silenceBefore: silenceBefore,
-                      duration: duration,
-                      trailingSilenceAfter: trailingSilenceAfter,
-                      endedBySilence: endedBySilence)
-    }
-
-    private func makeCaptureSnapshot(
-        duration: Duration = .milliseconds(300)
-    ) -> SpeechCaptureSnapshot {
-        SpeechCaptureSnapshot(audio: [Float](repeating: 0.1, count: 3200), duration: duration)
-    }
-
-    private func makeResult(
-        text: String,
-        confidence: Float = 0.9,
-        silenceBefore: Duration = .milliseconds(2000),
-        duration: Duration = .milliseconds(800),
-        trailingSilenceAfter: Duration = .zero,
-        endedBySilence: Bool = false
-    ) -> TranscriptionResult {
-        TranscriptionResult(text: text, confidence: confidence,
-                            segment: makeSpeechSegment(silenceBefore: silenceBefore,
-                                                       duration: duration,
-                                                       trailingSilenceAfter: trailingSilenceAfter,
-                                                       endedBySilence: endedBySilence))
-    }
-
-    private func collectStates(
-        from controller: SessionController,
-        count: Int,
-        timeout: Duration = .seconds(2)
-    ) async -> [HUDState] {
-        let task = Task {
-            var states: [HUDState] = []
-            for await state in controller.hudStates {
-                states.append(state)
-                if states.count >= count { break }
-            }
-            return states
-        }
-        let timer = Task {
-            try? await Task.sleep(for: timeout)
-            task.cancel()
-        }
-        let result = await task.value
-        timer.cancel()
-        return result
-    }
+    // MARK: Internal
 
     // MARK: - Toggle emits recording state
 
     func testToggleEmitsRecordingState() async throws {
-        let hotkeys  = MockHotkeyManager()
+        let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
-        let txr      = MockTranscriber(makeResult(text: ""))
-        let output   = MockOutputManager()
-        let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        let txr = MockTranscriber(makeResult(text: ""))
+        let output = MockOutputManager()
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
         await ctrl.start()
 
         let stateTask = Task { await self.collectStates(from: ctrl, count: 1) }
@@ -83,12 +31,17 @@ final class HUDStateTests: XCTestCase {
     // MARK: - Dictation: recording → transcribing → injected
 
     func testDictationEmitsFullSequence() async throws {
-        let hotkeys  = MockHotkeyManager()
+        let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
-        let txr      = MockTranscriber(makeResult(text: "git status"))
-        let output   = MockOutputManager()
-        let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        let txr = MockTranscriber(makeResult(text: "git status"))
+        let output = MockOutputManager()
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
         await ctrl.start()
 
         // listening + transcribing + injected = 3 states
@@ -109,12 +62,17 @@ final class HUDStateTests: XCTestCase {
     // MARK: - Discard emits idle then recording (auto-restart)
 
     func testDiscardEmitsIdle() async throws {
-        let hotkeys  = MockHotkeyManager()
+        let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
-        let txr      = MockTranscriber(makeResult(text: "noise", confidence: 0.05))
-        let output   = MockOutputManager()
-        let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        let txr = MockTranscriber(makeResult(text: "noise", confidence: 0.05))
+        let output = MockOutputManager()
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
         await ctrl.start()
 
         // listening + transcribing + listening = 3 states
@@ -135,12 +93,17 @@ final class HUDStateTests: XCTestCase {
     // MARK: - Toggle off emits idle
 
     func testToggleOffEmitsIdle() async throws {
-        let hotkeys  = MockHotkeyManager()
+        let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
-        let txr      = MockTranscriber(makeResult(text: ""))
-        let output   = MockOutputManager()
-        let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        let txr = MockTranscriber(makeResult(text: ""))
+        let output = MockOutputManager()
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
         await ctrl.start()
 
         // listening + idle = 2 states
@@ -159,15 +122,22 @@ final class HUDStateTests: XCTestCase {
     // MARK: - Utterance → transcribing → injected
 
     func testUtteranceEmitsTranscribingThenInjected() async throws {
-        let hotkeys  = MockHotkeyManager()
+        let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
-        let txr      = MockTranscriber(makeResult(text: "ls -la",
-                                                  silenceBefore: .milliseconds(200),
-                                                  trailingSilenceAfter: .milliseconds(900),
-                                                  endedBySilence: true))
-        let output   = MockOutputManager()
-        let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        let txr = MockTranscriber(makeResult(
+            text: "ls -la",
+            silenceBefore: .milliseconds(200),
+            trailingSilenceAfter: .milliseconds(900),
+            endedBySilence: true
+        ))
+        let output = MockOutputManager()
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
         await ctrl.start()
 
         // listening + transcribing + injected = 3
@@ -175,9 +145,11 @@ final class HUDStateTests: XCTestCase {
         try await Task.sleep(nanoseconds: 20_000_000)
         hotkeys.emit(.toggle)
         try await Task.sleep(nanoseconds: 30_000_000)
-        await pipeline.emitSegment(makeSpeechSegment(silenceBefore: .milliseconds(200),
-                                                     trailingSilenceAfter: .milliseconds(900),
-                                                     endedBySilence: true))
+        await pipeline.emitSegment(makeSpeechSegment(
+            silenceBefore: .milliseconds(200),
+            trailingSilenceAfter: .milliseconds(900),
+            endedBySilence: true
+        ))
 
         let states = await stateTask.value
         XCTAssertGreaterThanOrEqual(states.count, 3)
@@ -189,26 +161,35 @@ final class HUDStateTests: XCTestCase {
     // MARK: - Isolated ABORT → cleared
 
     func testIsolatedAbortEmitsCleared() async throws {
-        let hotkeys  = MockHotkeyManager()
+        let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
-        let txr      = MockTranscriber(makeResult(text: "ABORT",
-                                                   silenceBefore: .milliseconds(2000),
-                                                   duration: .milliseconds(800),
-                                                   trailingSilenceAfter: .milliseconds(900),
-                                                   endedBySilence: true))
-        let output   = MockOutputManager()
-        let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        let txr = MockTranscriber(makeResult(
+            text: "ABORT",
+            silenceBefore: .milliseconds(2000),
+            duration: .milliseconds(800),
+            trailingSilenceAfter: .milliseconds(900),
+            endedBySilence: true
+        ))
+        let output = MockOutputManager()
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
         await ctrl.start()
 
         let stateTask = Task { await self.collectStates(from: ctrl, count: 3) }
         try await Task.sleep(nanoseconds: 20_000_000)
         hotkeys.emit(.toggle)
         try await Task.sleep(nanoseconds: 30_000_000)
-        await pipeline.emitSegment(makeSpeechSegment(silenceBefore: .milliseconds(2000),
-                                                     duration: .milliseconds(800),
-                                                     trailingSilenceAfter: .milliseconds(900),
-                                                     endedBySilence: true))
+        await pipeline.emitSegment(makeSpeechSegment(
+            silenceBefore: .milliseconds(2000),
+            duration: .milliseconds(800),
+            trailingSilenceAfter: .milliseconds(900),
+            endedBySilence: true
+        ))
 
         let states = await stateTask.value
         XCTAssertGreaterThanOrEqual(states.count, 3)
@@ -247,11 +228,13 @@ final class HUDStateTests: XCTestCase {
     func testSendFailureEmitsErrorState() async throws {
         let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
-        let txr = MockTranscriber(makeResult(text: "ROGER",
-                                              silenceBefore: .milliseconds(2000),
-                                              duration: .milliseconds(800),
-                                              trailingSilenceAfter: .milliseconds(900),
-                                              endedBySilence: true))
+        let txr = MockTranscriber(makeResult(
+            text: "ROGER",
+            silenceBefore: .milliseconds(2000),
+            duration: .milliseconds(800),
+            trailingSilenceAfter: .milliseconds(900),
+            endedBySilence: true
+        ))
         let output = MockOutputManager()
         output.sendResult = .failure("Terminal session is busy")
         let ctrl = SessionController(
@@ -267,10 +250,12 @@ final class HUDStateTests: XCTestCase {
         try await Task.sleep(nanoseconds: 20_000_000)
         hotkeys.emit(.toggle)
         try await Task.sleep(nanoseconds: 30_000_000)
-        await pipeline.emitSegment(makeSpeechSegment(silenceBefore: .milliseconds(2000),
-                                                     duration: .milliseconds(800),
-                                                     trailingSilenceAfter: .milliseconds(900),
-                                                     endedBySilence: true))
+        await pipeline.emitSegment(makeSpeechSegment(
+            silenceBefore: .milliseconds(2000),
+            duration: .milliseconds(800),
+            trailingSilenceAfter: .milliseconds(900),
+            endedBySilence: true
+        ))
 
         let states = await stateTask.value
         XCTAssertEqual(states[2], .error("Terminal session is busy", continueListening: true))
@@ -279,12 +264,17 @@ final class HUDStateTests: XCTestCase {
     // MARK: - Live transcript partial text in HUD
 
     func testPartialTextAppearsInRecordingState() async throws {
-        let hotkeys  = MockHotkeyManager()
+        let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
-        let txr      = MockTranscriber(makeResult(text: "git status"))
-        let output   = MockOutputManager()
-        let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        let txr = MockTranscriber(makeResult(text: "git status"))
+        let output = MockOutputManager()
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
         await ctrl.start()
 
         let stateTask = Task { await self.collectStates(from: ctrl, count: 2) }
@@ -299,12 +289,17 @@ final class HUDStateTests: XCTestCase {
     }
 
     func testMultiplePartialUpdatesVisibleDuringUtterance() async throws {
-        let hotkeys  = MockHotkeyManager()
+        let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
-        let txr      = MockTranscriber(makeResult(text: "git status"))
-        let output   = MockOutputManager()
-        let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        let txr = MockTranscriber(makeResult(text: "git status"))
+        let output = MockOutputManager()
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
         await ctrl.start()
 
         let stateTask = Task { await self.collectStates(from: ctrl, count: 4) }
@@ -323,12 +318,17 @@ final class HUDStateTests: XCTestCase {
     }
 
     func testStalePartialSuppressedAfterFinalization() async throws {
-        let hotkeys  = MockHotkeyManager()
+        let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
-        let txr      = MockTranscriber(makeResult(text: "git status"))
-        let output   = MockOutputManager()
-        let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        let txr = MockTranscriber(makeResult(text: "git status"))
+        let output = MockOutputManager()
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
         await ctrl.start()
 
         // Collect the normal sequence: listening → partial → idle
@@ -350,7 +350,9 @@ final class HUDStateTests: XCTestCase {
         leakExp.isInverted = true
         let leakTask = Task {
             for await state in ctrl.hudStates {
-                if case .recording = state { leakExp.fulfill() }
+                if case .recording = state {
+                    leakExp.fulfill()
+                }
                 break
             }
         }
@@ -360,12 +362,17 @@ final class HUDStateTests: XCTestCase {
     }
 
     func testPartialStreamDeliversBeforeSlowSnapshotDecode() async throws {
-        let hotkeys  = MockHotkeyManager()
+        let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
-        let txr      = MockTranscriber(makeResult(text: "hello world"))
-        let output   = MockOutputManager()
-        let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        let txr = MockTranscriber(makeResult(text: "hello world"))
+        let output = MockOutputManager()
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
         await ctrl.start()
 
         let stateTask = Task { await self.collectStates(from: ctrl, count: 2) }
@@ -411,12 +418,17 @@ final class HUDStateTests: XCTestCase {
     }
 
     func testPartialTextNotEmittedAfterSegmentProcessed() async throws {
-        let hotkeys  = MockHotkeyManager()
+        let hotkeys = MockHotkeyManager()
         let pipeline = MockAudioPipeline()
-        let txr      = MockTranscriber(makeResult(text: "git status"))
-        let output   = MockOutputManager()
-        let ctrl     = SessionController(hotkeys: hotkeys, pipeline: pipeline,
-                                         transcriber: txr, resolver: EgregoreIntentResolver(), output: output)
+        let txr = MockTranscriber(makeResult(text: "git status"))
+        let output = MockOutputManager()
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
         await ctrl.start()
 
         // recording + transcribing + injected = 3
@@ -464,10 +476,17 @@ final class HUDStateTests: XCTestCase {
 
             XCTAssertEqual(frame.width, HUDWindowController.width, "\(label): width")
             XCTAssertEqual(frame.height, HUDWindowController.height, "\(label): height")
-            XCTAssertEqual(frame.minY, screenFrame.minY + HUDWindowController.bottomMargin,
-                           "\(label): bottom margin from screen origin")
-            XCTAssertEqual(frame.midX, screenFrame.midX, accuracy: 0.5,
-                           "\(label): horizontal center")
+            XCTAssertEqual(
+                frame.minY,
+                screenFrame.minY + HUDWindowController.bottomMargin,
+                "\(label): bottom margin from screen origin"
+            )
+            XCTAssertEqual(
+                frame.midX,
+                screenFrame.midX,
+                accuracy: 0.5,
+                "\(label): horizontal center"
+            )
         }
     }
 
@@ -478,11 +497,86 @@ final class HUDStateTests: XCTestCase {
         let smallFrame = HUDWindowController.anchoredFrame(screenFrame: small)
         let largeFrame = HUDWindowController.anchoredFrame(screenFrame: large)
 
-        XCTAssertEqual(smallFrame.minY, largeFrame.minY,
-                       "bottom margin identical regardless of screen size")
-        XCTAssertNotEqual(smallFrame.midX, largeFrame.midX,
-                          "horizontal center differs for different widths")
+        XCTAssertEqual(
+            smallFrame.minY,
+            largeFrame.minY,
+            "bottom margin identical regardless of screen size"
+        )
+        XCTAssertNotEqual(
+            smallFrame.midX,
+            largeFrame.midX,
+            "horizontal center differs for different widths"
+        )
         XCTAssertEqual(smallFrame.midX, small.midX, accuracy: 0.5)
         XCTAssertEqual(largeFrame.midX, large.midX, accuracy: 0.5)
+    }
+
+    // MARK: Private
+
+    // MARK: - Helpers
+
+    private func makeSpeechSegment(
+        silenceBefore: Duration = .milliseconds(2000),
+        duration: Duration = .milliseconds(800),
+        trailingSilenceAfter: Duration = .zero,
+        endedBySilence: Bool = false
+    ) -> SpeechSegment {
+        SpeechSegment(
+            audio: [Float](repeating: 0.1, count: 1600),
+            silenceBefore: silenceBefore,
+            duration: duration,
+            trailingSilenceAfter: trailingSilenceAfter,
+            endedBySilence: endedBySilence
+        )
+    }
+
+    private func makeCaptureSnapshot(
+        duration: Duration = .milliseconds(300)
+    ) -> SpeechCaptureSnapshot {
+        SpeechCaptureSnapshot(audio: [Float](repeating: 0.1, count: 3200), duration: duration)
+    }
+
+    private func makeResult(
+        text: String,
+        confidence: Float = 0.9,
+        silenceBefore: Duration = .milliseconds(2000),
+        duration: Duration = .milliseconds(800),
+        trailingSilenceAfter: Duration = .zero,
+        endedBySilence: Bool = false
+    ) -> TranscriptionResult {
+        TranscriptionResult(
+            text: text,
+            confidence: confidence,
+            segment: makeSpeechSegment(
+                silenceBefore: silenceBefore,
+                duration: duration,
+                trailingSilenceAfter: trailingSilenceAfter,
+                endedBySilence: endedBySilence
+            )
+        )
+    }
+
+    private func collectStates(
+        from controller: SessionController,
+        count: Int,
+        timeout: Duration = .seconds(2)
+    ) async -> [HUDState] {
+        let task = Task {
+            var states: [HUDState] = []
+            for await state in controller.hudStates {
+                states.append(state)
+                if states.count >= count {
+                    break
+                }
+            }
+            return states
+        }
+        let timer = Task {
+            try? await Task.sleep(for: timeout)
+            task.cancel()
+        }
+        let result = await task.value
+        timer.cancel()
+        return result
     }
 }

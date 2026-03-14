@@ -1,7 +1,7 @@
 import Foundation
 
 struct TerminalTextNormalizer {
-    private static let trailingPunctuation = CharacterSet(charactersIn: ".,;:!?")
+    // MARK: Internal
 
     func normalizeForInjection(_ text: String) -> String {
         var normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -14,4 +14,8 @@ struct TerminalTextNormalizer {
 
         return normalized
     }
+
+    // MARK: Private
+
+    private static let trailingPunctuation = CharacterSet(charactersIn: ".,;:!?")
 }

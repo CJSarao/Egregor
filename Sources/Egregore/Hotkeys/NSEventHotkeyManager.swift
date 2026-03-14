@@ -2,16 +2,7 @@ import AppKit
 import Foundation
 
 actor NSEventHotkeyManager: HotkeyManager {
-
-    let bindings: HotkeyBindings
-
-    private let outputContinuation: AsyncStream<HotkeyEvent>.Continuation
-    nonisolated let events: AsyncStream<HotkeyEvent>
-
-    private var toggleKeyDown = false
-
-    private var diagnosticsEnabled = false
-    private var monitors: [Any] = []
+    // MARK: Lifecycle
 
     init(bindings: HotkeyBindings = .default, installMonitors: Bool = true) {
         self.bindings = bindings
@@ -19,9 +10,17 @@ actor NSEventHotkeyManager: HotkeyManager {
         events = AsyncStream { cont = $0 }
         outputContinuation = cont
 
-        guard installMonitors else { return }
+        guard installMonitors else {
+            return
+        }
         Task { await self._installMonitors() }
     }
+
+    // MARK: Internal
+
+    let bindings: HotkeyBindings
+
+    nonisolated let events: AsyncStream<HotkeyEvent>
 
     func setDiagnostics(enabled: Bool) {
         diagnosticsEnabled = enabled
@@ -36,10 +35,12 @@ actor NSEventHotkeyManager: HotkeyManager {
             RuntimeLogger.shared.log("KEY EVENT keyCode=\(keyCode) flags=[\(flagNames)]", category: .hotkey)
         }
 
-        guard keyCode == bindings.toggleKey.keyCode else { return }
+        guard keyCode == bindings.toggleKey.keyCode else {
+            return
+        }
 
         let isDown = flags.contains(bindings.toggleKey.flag)
-        if isDown && !toggleKeyDown {
+        if isDown, !toggleKeyDown {
             toggleKeyDown = true
             RuntimeLogger.shared.log("\(bindings.toggleKey.displayName) tap → toggle", category: .hotkey)
             outputContinuation.yield(.toggle)
@@ -48,7 +49,14 @@ actor NSEventHotkeyManager: HotkeyManager {
         }
     }
 
-    // MARK: - Private
+    // MARK: Private
+
+    private let outputContinuation: AsyncStream<HotkeyEvent>.Continuation
+
+    private var toggleKeyDown = false
+
+    private var diagnosticsEnabled = false
+    private var monitors: [Any] = []
 
     private func _installMonitors() {
         let m = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
@@ -56,17 +64,31 @@ actor NSEventHotkeyManager: HotkeyManager {
             let flags = event.modifierFlags
             Task { await self?.processFlagsChanged(keyCode: keyCode, flags: flags) }
         }
-        if let m { monitors.append(m) }
+        if let m {
+            monitors.append(m)
+        }
     }
 
     private func describeFlagsMask(_ flags: NSEvent.ModifierFlags) -> String {
         var parts: [String] = []
-        if flags.contains(.capsLock) { parts.append("capsLock") }
-        if flags.contains(.shift) { parts.append("shift") }
-        if flags.contains(.control) { parts.append("control") }
-        if flags.contains(.option) { parts.append("option") }
-        if flags.contains(.command) { parts.append("command") }
-        if flags.contains(.function) { parts.append("fn") }
+        if flags.contains(.capsLock) {
+            parts.append("capsLock")
+        }
+        if flags.contains(.shift) {
+            parts.append("shift")
+        }
+        if flags.contains(.control) {
+            parts.append("control")
+        }
+        if flags.contains(.option) {
+            parts.append("option")
+        }
+        if flags.contains(.command) {
+            parts.append("command")
+        }
+        if flags.contains(.function) {
+            parts.append("fn")
+        }
         return parts.joined(separator: ", ")
     }
 }

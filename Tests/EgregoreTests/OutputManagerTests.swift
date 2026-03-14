@@ -3,33 +3,7 @@ import Darwin
 @testable import Egregore
 
 final class OutputManagerTests: XCTestCase {
-    private var logDir: URL!
-    private var logFile: URL!
-    private var registryURL: URL!
-    private var activityURL: URL!
-
-    // Opens the FIFO with O_RDWR so both ends are held — no blocking on open,
-    // and a non-blocking writer (ShellOutputManager) can connect immediately.
-    private func makePipe() -> (path: String, fd: Int32) {
-        let path = "/tmp/egregore-test-\(getpid())-\(UInt32.random(in: 0..<UInt32.max)).pipe"
-        Darwin.mkfifo(path, 0o600)
-        let fd = Darwin.open(path, O_RDWR)
-        precondition(fd >= 0, "Failed to open test FIFO at \(path)")
-        return (path, fd)
-    }
-
-    private func readAll(fd: Int32) -> String {
-        let flags = fcntl(fd, F_GETFL)
-        _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
-        defer { _ = fcntl(fd, F_SETFL, flags) }
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        let n = Darwin.read(fd, &buffer, 4095)
-        return n > 0 ? String(bytes: Array(buffer.prefix(n)), encoding: .utf8) ?? "" : ""
-    }
-
-    private func readLog() -> String {
-        (try? String(contentsOf: logFile, encoding: .utf8)) ?? ""
-    }
+    // MARK: Internal
 
     override func setUp() {
         super.setUp()
@@ -49,9 +23,11 @@ final class OutputManagerTests: XCTestCase {
 
     func testAppendWritesInjectMessage() {
         let (path, fd) = makePipe()
-        defer { Darwin.close(fd); Darwin.unlink(path) }
+        defer { Darwin.close(fd)
+            Darwin.unlink(path)
+        }
 
-        let manager = ShellOutputManager(sessionResolver: { path })
+        let manager = ShellOutputManager { path }
         manager.append("hello world")
 
         XCTAssertEqual(readAll(fd: fd), "inject|hello world\n")
@@ -59,9 +35,11 @@ final class OutputManagerTests: XCTestCase {
 
     func testMultipleAppendsWriteSequentialInjectMessages() {
         let (path, fd) = makePipe()
-        defer { Darwin.close(fd); Darwin.unlink(path) }
+        defer { Darwin.close(fd)
+            Darwin.unlink(path)
+        }
 
-        let manager = ShellOutputManager(sessionResolver: { path })
+        let manager = ShellOutputManager { path }
         manager.append("foo")
         manager.append("bar")
 
@@ -74,9 +52,11 @@ final class OutputManagerTests: XCTestCase {
 
     func testClearWritesClearMessage() {
         let (path, fd) = makePipe()
-        defer { Darwin.close(fd); Darwin.unlink(path) }
+        defer { Darwin.close(fd)
+            Darwin.unlink(path)
+        }
 
-        let manager = ShellOutputManager(sessionResolver: { path })
+        let manager = ShellOutputManager { path }
         manager.clear()
 
         XCTAssertEqual(readAll(fd: fd), "clear|\n")
@@ -84,9 +64,11 @@ final class OutputManagerTests: XCTestCase {
 
     func testAppendThenClearWritesBothMessages() {
         let (path, fd) = makePipe()
-        defer { Darwin.close(fd); Darwin.unlink(path) }
+        defer { Darwin.close(fd)
+            Darwin.unlink(path)
+        }
 
-        let manager = ShellOutputManager(sessionResolver: { path })
+        let manager = ShellOutputManager { path }
         manager.append("some text")
         manager.clear()
 
@@ -99,9 +81,11 @@ final class OutputManagerTests: XCTestCase {
 
     func testMultipleAppendsFollowedByClearResultsInClearMessage() {
         let (path, fd) = makePipe()
-        defer { Darwin.close(fd); Darwin.unlink(path) }
+        defer { Darwin.close(fd)
+            Darwin.unlink(path)
+        }
 
-        let manager = ShellOutputManager(sessionResolver: { path })
+        let manager = ShellOutputManager { path }
         manager.append("alpha")
         manager.append("beta")
         manager.append("gamma")
@@ -117,9 +101,11 @@ final class OutputManagerTests: XCTestCase {
 
     func testAppendWithUnicodeText() {
         let (path, fd) = makePipe()
-        defer { Darwin.close(fd); Darwin.unlink(path) }
+        defer { Darwin.close(fd)
+            Darwin.unlink(path)
+        }
 
-        let manager = ShellOutputManager(sessionResolver: { path })
+        let manager = ShellOutputManager { path }
         manager.append("git log --oneline 🎉")
 
         XCTAssertEqual(readAll(fd: fd), "inject|git log --oneline 🎉\n")
@@ -127,9 +113,11 @@ final class OutputManagerTests: XCTestCase {
 
     func testAppendWithEmptyStringWritesEmptyInjectMessage() {
         let (path, fd) = makePipe()
-        defer { Darwin.close(fd); Darwin.unlink(path) }
+        defer { Darwin.close(fd)
+            Darwin.unlink(path)
+        }
 
-        let manager = ShellOutputManager(sessionResolver: { path })
+        let manager = ShellOutputManager { path }
         manager.append("")
 
         XCTAssertEqual(readAll(fd: fd), "inject|\n")
@@ -142,14 +130,16 @@ final class OutputManagerTests: XCTestCase {
         manager.clear()
         // No crash — silent no-op when no session is found
         let contents = readLog()
-        XCTAssertTrue(contents.contains("writeToPipe failed: no registered shell session found"))
+        XCTAssertTrue(contents.contains("no registered shell session found"))
     }
 
     func testSendDoesNotCrash() {
         let (path, fd) = makePipe()
-        defer { Darwin.close(fd); Darwin.unlink(path) }
+        defer { Darwin.close(fd)
+            Darwin.unlink(path)
+        }
 
-        let manager = ShellOutputManager(sessionResolver: { path })
+        let manager = ShellOutputManager { path }
         manager.send()
 
         XCTAssertEqual(readAll(fd: fd), "send|\n")
@@ -161,7 +151,7 @@ final class OutputManagerTests: XCTestCase {
         manager.send()
 
         let contents = readLog()
-        XCTAssertTrue(contents.contains("writeToPipe failed: no registered shell session found"))
+        XCTAssertTrue(contents.contains("no registered shell session found"))
     }
 
     func testMissingPipePathLogsDistinctError() {
@@ -178,7 +168,9 @@ final class OutputManagerTests: XCTestCase {
 
     func testAppendLogDoesNotContainRawText() {
         let (path, fd) = makePipe()
-        defer { Darwin.close(fd); Darwin.unlink(path) }
+        defer { Darwin.close(fd)
+            Darwin.unlink(path)
+        }
 
         let logger = RuntimeLogger(fileURL: logFile)
         let manager = ShellOutputManager(sessionResolver: { path }, logger: logger)
@@ -202,10 +194,12 @@ final class OutputManagerTests: XCTestCase {
             Darwin.unlink(hiddenPath)
         }
 
-        try visiblePath.write(to: registryURL.appending(path: "501"), atomically: true, encoding: .utf8)
-        try hiddenPath.write(to: registryURL.appending(path: "601"), atomically: true, encoding: .utf8)
-        try "10.0".write(to: activityURL.appending(path: "501"), atomically: true, encoding: .utf8)
-        try "20.0".write(to: activityURL.appending(path: "601"), atomically: true, encoding: .utf8)
+        try """
+        {"pipePath":"\(visiblePath)","lastPromptAt":10.0,"lastFocusAt":10.0,"isFocused":true,"isAtPrompt":true,"tty":null}
+        """.write(to: registryURL.appending(path: "501"), atomically: true, encoding: .utf8)
+        try """
+        {"pipePath":"\(hiddenPath)","lastPromptAt":20.0,"lastFocusAt":20.0,"isFocused":true,"isAtPrompt":true,"tty":null}
+        """.write(to: registryURL.appending(path: "601"), atomically: true, encoding: .utf8)
 
         let logger = RuntimeLogger(fileURL: logFile)
         let manager = ShellOutputManager(
@@ -214,9 +208,9 @@ final class OutputManagerTests: XCTestCase {
             frontmostApplicationProvider: { .init(pid: 400, name: "Ghostty") },
             childPIDProvider: { pid in
                 switch pid {
-                case 400: return [501]
-                case 500: return [601]
-                default: return []
+                case 400: [501]
+                case 500: [601]
+                default: []
                 }
             },
             visibleWindowPIDsProvider: { [400] },
@@ -245,8 +239,8 @@ final class OutputManagerTests: XCTestCase {
             frontmostApplicationProvider: { .init(pid: 200, name: "Ghostty") },
             childPIDProvider: { pid in
                 switch pid {
-                case 200: return [301]
-                default: return []
+                case 200: [301]
+                default: []
                 }
             },
             visibleWindowPIDsProvider: { [999] },
@@ -270,10 +264,12 @@ final class OutputManagerTests: XCTestCase {
             Darwin.unlink(newerPath)
         }
 
-        try olderPath.write(to: registryURL.appending(path: "201"), atomically: true, encoding: .utf8)
-        try newerPath.write(to: registryURL.appending(path: "202"), atomically: true, encoding: .utf8)
-        try "10.0".write(to: activityURL.appending(path: "201"), atomically: true, encoding: .utf8)
-        try "20.0".write(to: activityURL.appending(path: "202"), atomically: true, encoding: .utf8)
+        try """
+        {"pipePath":"\(olderPath)","lastPromptAt":10.0,"lastFocusAt":10.0,"isFocused":true,"isAtPrompt":true,"tty":null}
+        """.write(to: registryURL.appending(path: "201"), atomically: true, encoding: .utf8)
+        try """
+        {"pipePath":"\(newerPath)","lastPromptAt":20.0,"lastFocusAt":20.0,"isFocused":true,"isAtPrompt":true,"tty":null}
+        """.write(to: registryURL.appending(path: "202"), atomically: true, encoding: .utf8)
 
         let logger = RuntimeLogger(fileURL: logFile)
         let manager = ShellOutputManager(
@@ -282,10 +278,10 @@ final class OutputManagerTests: XCTestCase {
             frontmostApplicationProvider: { .init(pid: 100, name: "Ghostty") },
             childPIDProvider: { pid in
                 switch pid {
-                case 100: return [200, 300]
-                case 200: return [201]
-                case 300: return [202]
-                default: return []
+                case 100: [200, 300]
+                case 200: [201]
+                case 300: [202]
+                default: []
                 }
             },
             visibleWindowPIDsProvider: { [] },
@@ -325,8 +321,8 @@ final class OutputManagerTests: XCTestCase {
             frontmostApplicationProvider: { .init(pid: 700, name: "Ghostty") },
             childPIDProvider: { pid in
                 switch pid {
-                case 700: return [701, 702]
-                default: return []
+                case 700: [701, 702]
+                default: []
                 }
             },
             visibleWindowPIDsProvider: { [700] },
@@ -363,8 +359,8 @@ final class OutputManagerTests: XCTestCase {
             frontmostApplicationProvider: { .init(pid: 800, name: "Ghostty") },
             childPIDProvider: { pid in
                 switch pid {
-                case 800: return [801, 802]
-                default: return []
+                case 800: [801, 802]
+                default: []
                 }
             },
             visibleWindowPIDsProvider: { [800] },
@@ -376,5 +372,35 @@ final class OutputManagerTests: XCTestCase {
         XCTAssertEqual(readAll(fd: leftFD), "")
         XCTAssertEqual(readAll(fd: rightFD), "")
         XCTAssertTrue(readLog().contains("ambiguous top candidates"))
+    }
+
+    // MARK: Private
+
+    private var logDir: URL!
+    private var logFile: URL!
+    private var registryURL: URL!
+    private var activityURL: URL!
+
+    /// Opens the FIFO with O_RDWR so both ends are held — no blocking on open,
+    /// and a non-blocking writer (ShellOutputManager) can connect immediately.
+    private func makePipe() -> (path: String, fd: Int32) {
+        let path = "/tmp/egregore-test-\(getpid())-\(UInt32.random(in: 0 ..< UInt32.max)).pipe"
+        Darwin.mkfifo(path, 0o600)
+        let fd = Darwin.open(path, O_RDWR)
+        precondition(fd >= 0, "Failed to open test FIFO at \(path)")
+        return (path, fd)
+    }
+
+    private func readAll(fd: Int32) -> String {
+        let flags = fcntl(fd, F_GETFL)
+        _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+        defer { _ = fcntl(fd, F_SETFL, flags) }
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        let n = Darwin.read(fd, &buffer, 4095)
+        return n > 0 ? String(bytes: Array(buffer.prefix(n)), encoding: .utf8) ?? "" : ""
+    }
+
+    private func readLog() -> String {
+        (try? String(contentsOf: logFile, encoding: .utf8)) ?? ""
     }
 }

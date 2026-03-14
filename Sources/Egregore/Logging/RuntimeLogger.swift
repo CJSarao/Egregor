@@ -2,14 +2,7 @@ import Foundation
 import os
 
 final class RuntimeLogger: Sendable {
-    static let shared = RuntimeLogger()
-
-    static let logDirectoryURL = URL.homeDirectory
-        .appending(path: ".local/share/egregore/logs", directoryHint: .isDirectory)
-    static var logFileURL: URL { logDirectoryURL.appending(path: "egregore.log") }
-
-    private let fileHandle: NIOLockedValueBox<FileHandle?>
-    private let osLog = Logger(subsystem: "com.egregore.app", category: "runtime")
+    // MARK: Lifecycle
 
     init() {
         let dir = Self.logDirectoryURL
@@ -30,6 +23,31 @@ final class RuntimeLogger: Sendable {
         }
         fileHandle = NIOLockedValueBox(try? FileHandle(forWritingTo: fileURL))
         _ = fileHandle.withLockedValue { $0?.seekToEndOfFile() }
+    }
+
+    // MARK: Internal
+
+    enum Category: String {
+        case general
+        case hotkey
+        case audio
+        case transcriber
+        case resolver
+        case output
+        case session
+    }
+
+    static let shared = RuntimeLogger()
+
+    static let logDirectoryURL = URL.homeDirectory
+        .appending(path: ".local/share/egregore/logs", directoryHint: .isDirectory)
+
+    static var logFileURL: URL {
+        logDirectoryURL.appending(path: "egregore.log")
+    }
+
+    static func timestampString(for date: Date) -> String {
+        formatter.string(from: date)
     }
 
     func log(_ message: String, category: Category = .general) {
@@ -54,37 +72,36 @@ final class RuntimeLogger: Sendable {
         }
     }
 
-    static func timestampString(for date: Date) -> String {
-        formatter.string(from: date)
-    }
-
-    enum Category: String, Sendable {
-        case general
-        case hotkey
-        case audio
-        case transcriber
-        case resolver
-        case output
-        case session
-    }
+    // MARK: Private
 
     private static let formatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return f
     }()
+
+    private let fileHandle: NIOLockedValueBox<FileHandle?>
+    private let osLog = Logger(subsystem: "com.egregore.app", category: "runtime")
 }
 
-// Minimal lock box — avoids importing NIO just for thread-safe mutable state.
+/// Minimal lock box — avoids importing NIO just for thread-safe mutable state.
 final class NIOLockedValueBox<Value>: @unchecked Sendable {
-    private var value: Value
-    private let lock = NSLock()
+    // MARK: Lifecycle
 
-    init(_ value: Value) { self.value = value }
+    init(_ value: Value) {
+        self.value = value
+    }
+
+    // MARK: Internal
 
     func withLockedValue<T>(_ body: (inout Value) throws -> T) rethrows -> T {
         lock.lock()
         defer { lock.unlock() }
         return try body(&value)
     }
+
+    // MARK: Private
+
+    private var value: Value
+    private let lock = NSLock()
 }
