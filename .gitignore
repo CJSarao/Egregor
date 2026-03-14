@@ -3,3 +3,14 @@ logs/*
 .swiftpm/xcode/
 *.xcworkspace
 DerivedData/
+
+# Local-only files
+prompt.md
+ralph.sh
+progress.md
+session-*-handoff.md
+
+# Build artifacts
+*.d
+*.o
+*.swiftdeps

@@ -493,3 +493,58 @@ Each milestone is independently verifiable. Milestones 1–3 require no hardware
 | 6 | Isolated ROGER/ABORT route to commands, normal speech injects after silence finalization | Hardware E2E |
 | 7 | HUD: appears on record, shows live transcript text during capture, and dismisses correctly for all exit paths | Visual verification |
 | 8 | Shell integration installer: prompt, snippet written to `.zshrc`, registry operational across multiple sessions | Integration test |
+
+---
+
+## 14. egregore-read — Epub Text-to-Speech
+
+Standalone CLI executable in the same package. Reads DRM-free `.epub` files aloud using macOS built-in TTS. Designed for passive listening (workouts, chores) — the text→speech counterpart to Egregore's speech→text pipeline.
+
+### Invocation
+
+```
+egregore-read <file.epub> [--chapter N] [--page N] [--rate R] [--print]
+```
+
+| Flag | Description |
+|---|---|
+| `--chapter N` | Start from chapter N (1-based, spine order) |
+| `--page N` | Start from page N (requires `page-list` nav in epub) |
+| `--rate R` | Speech rate 0.0–1.0 (default: system) |
+| `--print` | Echo text to terminal as it's spoken |
+
+### Controls (terminal keyboard)
+
+| Key | Action |
+|---|---|
+| `space` | Pause / resume |
+| `n` | Next chapter |
+| `p` | Previous chapter |
+| `q` | Quit |
+
+### TTS Engine
+
+`AVSpeechSynthesizer` — macOS built-in, offline, zero dependencies. Voice: Zoe Premium (`com.apple.voice.premium.en-US.Zoe`). Falls back to system default if unavailable.
+
+### Epub Parsing
+
+Epubs are zipped XHTML. Parsing pipeline:
+
+1. Unzip to temp directory
+2. `META-INF/container.xml` → locate `content.opf`
+3. `content.opf` → spine order (chapter XHTML hrefs) + manifest
+4. `META-INF/encryption.xml` → if `EncryptedData` entries present, reject as DRM-protected
+5. Each chapter XHTML → extract `<p>`, `<div>`, and heading (`<h1>`–`<h6>`) text as ordered paragraphs
+6. `nav.xhtml` page-list (EPUB3) → optional page-to-chapter mapping
+
+### Position Model
+
+Chapters are spine items (each XHTML file in reading order). Paragraphs are `<p>` elements — reliably present in well-formed epubs. Pages exist only when the epub includes a `page-list` nav element mapping to print edition pages.
+
+### Non-Goals
+
+- Bookmarks or persisted reading position
+- GUI or menu bar integration (CLI only for now)
+- DRM decryption
+- Cloud TTS engines
+- Non-epub formats (PDF, MOBI)
