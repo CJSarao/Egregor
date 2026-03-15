@@ -16,7 +16,14 @@ public final class Speaker: NSObject, @unchecked Sendable, AVSpeechSynthesizerDe
     }
 
     public func speak(_ text: String) async {
-        let utterance = AVSpeechUtterance(string: text)
+        let stripped = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !stripped.isEmpty else { return }
+
+        // Resume any leaked continuation from a prior call
+        continuation?.resume()
+        continuation = nil
+
+        let utterance = AVSpeechUtterance(string: stripped)
         utterance.rate = rate
         utterance.voice = voice
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
@@ -37,6 +44,10 @@ public final class Speaker: NSObject, @unchecked Sendable, AVSpeechSynthesizerDe
 
     public func stop() {
         synthesizer.stopSpeaking(at: .immediate)
+        isPaused = false
+        // If no speech was active, didCancel won't fire — resume manually
+        continuation?.resume()
+        continuation = nil
     }
 
     // MARK: - AVSpeechSynthesizerDelegate

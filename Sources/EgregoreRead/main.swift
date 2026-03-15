@@ -118,8 +118,9 @@ func installSignalHandlers() {
 
 import AVFoundation
 
-enum Command {
-    case none, pause, resume, nextChapter, prevChapter, quit
+final class SpeakState: @unchecked Sendable {
+    private(set) var finished = false
+    func markFinished() { finished = true }
 }
 
 func run() async {
@@ -187,11 +188,13 @@ func run() async {
                 print("\r\n\(text)\r")
             }
 
-            // Speak in a task so we can poll keys concurrently
-            let speakTask = Task { await speaker.speak(text) }
+            let state = SpeakState()
+            let speakTask = Task {
+                await speaker.speak(text)
+                state.markFinished()
+            }
 
-            // Poll keyboard while speaking
-            while !speakTask.isCancelled {
+            while !state.finished {
                 if let key = readKey() {
                     switch key {
                     case 0x20:  // space
@@ -204,7 +207,6 @@ func run() async {
                         }
                     case UInt8(ascii: "n"):
                         speaker.stop()
-                        speakTask.cancel()
                         chapterIdx += 1
                         if chapterIdx >= book.chapters.count {
                             print("\r\nReached end of book.\r")
@@ -213,7 +215,6 @@ func run() async {
                         continue outer
                     case UInt8(ascii: "p"):
                         speaker.stop()
-                        speakTask.cancel()
                         chapterIdx = max(0, chapterIdx - 1)
                         continue outer
                     case UInt8(ascii: "q"):
@@ -227,7 +228,7 @@ func run() async {
                 try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms poll
             }
 
-            await speakTask.value
+            _ = await speakTask.value
         }
 
         chapterIdx += 1
