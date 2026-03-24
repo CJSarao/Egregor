@@ -31,6 +31,8 @@ actor WhisperKitTranscriber: Transcriber {
 
     // MARK: Internal
 
+    nonisolated var isModelReady: Bool { _modelReady }
+
     typealias Engine = @Sendable ([Float], @escaping @Sendable (String) -> Void) async throws -> (text: String, avgLogprobs: [Float])
 
     static let modelVariant = "openai_whisper-large-v3_turbo"
@@ -107,6 +109,7 @@ actor WhisperKitTranscriber: Transcriber {
     private var engineLoadTask: Task<Engine, Error>?
     private let progressHandler: ((Double) -> Void)?
     private let log: RuntimeLogger
+    nonisolated(unsafe) private var _modelReady = false
 
     private let partialContinuation: AsyncStream<String>.Continuation
 
@@ -161,6 +164,7 @@ actor WhisperKitTranscriber: Transcriber {
         do {
             let e = try await task.value
             engine = e
+            _modelReady = true
             engineLoadTask = nil
             log.log("WhisperKit engine loaded", category: .transcriber)
             return e

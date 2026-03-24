@@ -129,8 +129,10 @@ final class HUDViewModel: ObservableObject {
         case .idle:
             visible = false
 
-        case .listening,
+        case .loading,
+             .listening,
              .recording,
+             .streaming,
              .transcribing:
             visible = true
 
@@ -212,7 +214,13 @@ struct HUDContentView: View {
                 .fill(.red)
                 .frame(width: 10, height: 10)
 
-        case .transcribing:
+        case .streaming:
+            Circle()
+                .fill(.green)
+                .frame(width: 10, height: 10)
+
+        case .loading,
+             .transcribing:
             ProgressView()
                 .controlSize(.small)
 
@@ -241,6 +249,16 @@ struct HUDContentView: View {
             Text("Recording")
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.primary)
+
+        case .streaming:
+            Text("Streaming")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.primary)
+
+        case .loading:
+            Text("Loading model...")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
 
         case .transcribing:
             Text("Processing")

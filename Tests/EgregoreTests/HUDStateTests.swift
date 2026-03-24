@@ -221,7 +221,7 @@ final class HUDStateTests: XCTestCase {
 
         let states = await stateTask.value
         XCTAssertEqual(states[0], .listening)
-        XCTAssertEqual(states[1], .error("No active terminal target", continueListening: true))
+        XCTAssertEqual(states[1], .recording, "append failure should still emit recording — speech is being heard")
     }
 
     func testSendFailureEmitsErrorState() async throws {

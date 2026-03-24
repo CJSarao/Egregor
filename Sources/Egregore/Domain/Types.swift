@@ -56,8 +56,10 @@ enum OutputResult: Equatable {
 
 enum HUDState: Equatable {
     case idle
+    case loading
     case listening
     case recording
+    case streaming
     case transcribing
     case injected(continueListening: Bool = false)
     case cleared(continueListening: Bool = false)

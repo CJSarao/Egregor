@@ -725,6 +725,7 @@ final class SequentialMockTranscriber: Transcriber, @unchecked Sendable {
 
     // MARK: Internal
 
+    var isModelReady: Bool = true
     nonisolated let partialTextStream: AsyncStream<String>
 
     func emitPartial(_ text: String) {

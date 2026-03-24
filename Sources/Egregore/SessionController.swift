@@ -81,8 +81,14 @@ actor SessionController {
             } else {
                 isMicOpen = true
                 beginListeningCycle()
-                log.log("toggle → start recording", category: .session)
-                hudContinuation.yield(.listening)
+                if transcriber.isModelReady {
+                    log.log("toggle → start recording", category: .session)
+                    hudContinuation.yield(.listening)
+                } else {
+                    log.log("toggle → start recording (model still loading)", category: .session)
+                    hudContinuation.yield(.loading)
+                    awaitModelReady()
+                }
                 await pipeline.start()
             }
         }
@@ -100,9 +106,11 @@ actor SessionController {
 
     private func runPartialStreamLoop() async {
         var emittedRecording = false
+        var emittedStreaming = false
         for await text in transcriber.partialTextStream {
             guard isMicOpen, acceptsPartialUpdates else {
                 emittedRecording = false
+                emittedStreaming = false
                 continue
             }
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -113,6 +121,10 @@ actor SessionController {
             let normalized = textNormalizer.normalizeForInjection(trimmed)
             guard !normalized.isEmpty else {
                 continue
+            }
+            if !emittedRecording {
+                hudContinuation.yield(.recording)
+                emittedRecording = true
             }
             let previous = lastInjectedPartial
             var result: OutputResult = .success
@@ -141,13 +153,12 @@ actor SessionController {
             }
             if case let .failure(message) = result {
                 log.error("partial append failed: \(message)", category: .session)
-                hudContinuation.yield(.error(message, continueListening: isMicOpen))
                 continue
             }
             lastInjectedPartial = normalized
-            if !emittedRecording {
-                hudContinuation.yield(.recording)
-                emittedRecording = true
+            if !emittedStreaming {
+                hudContinuation.yield(.streaming)
+                emittedStreaming = true
             }
         }
     }
@@ -219,6 +230,17 @@ actor SessionController {
                 log.log("dispatch: cleared partial text from terminal", category: .session)
             }
             hudContinuation.yield(continueListening ? .listening : .idle)
+        }
+    }
+
+    private func awaitModelReady() {
+        Task {
+            while !transcriber.isModelReady {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
+            guard isMicOpen else { return }
+            hudContinuation.yield(.listening)
+            log.log("model loaded, transitioned to listening", category: .session)
         }
     }
 

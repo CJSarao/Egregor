@@ -80,6 +80,7 @@ final class MockTranscriber: Transcriber, @unchecked Sendable {
 
     var result: TranscriptionResult
     var partialText = ""
+    var isModelReady: Bool = true
 
     nonisolated let partialTextStream: AsyncStream<String>
 
@@ -718,6 +719,110 @@ final class SessionControllerIntegrationTests: XCTestCase {
         await fulfillment(of: [exp], timeout: 2)
         XCTAssertEqual(output.replaced, ["git stash"])
     }
+
+    // MARK: HUD state machine
+
+    func testToggleWhenModelNotReadyEmitsLoading() async throws {
+        let output = MockOutputManager()
+        let hotkeys = MockHotkeyManager()
+        let pipeline = MockAudioPipeline()
+        let txr = MockTranscriber(makeTranscriptionResult(text: ""))
+        txr.isModelReady = false
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
+        await ctrl.start()
+
+        var hudStates: [HUDState] = []
+        let exp = expectation(description: "loading state emitted")
+        let collector = Task {
+            for await state in ctrl.hudStates {
+                hudStates.append(state)
+                if state == .loading { exp.fulfill() }
+            }
+        }
+
+        hotkeys.emit(.toggle)
+        await fulfillment(of: [exp], timeout: 2)
+        collector.cancel()
+
+        XCTAssertTrue(hudStates.contains(.loading))
+        XCTAssertFalse(hudStates.contains(.listening), "should show loading, not listening, when model not ready")
+        let startCount = await pipeline.startCount
+        XCTAssertEqual(startCount, 1, "pipeline should still start while model loads")
+    }
+
+    func testPartialWithFailedAppendEmitsRecording() async throws {
+        let output = MockOutputManager()
+        output.appendResult = .failure("No active terminal target")
+        let hotkeys = MockHotkeyManager()
+        let pipeline = MockAudioPipeline()
+        let txr = MockTranscriber(makeTranscriptionResult(text: "hello"))
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
+        await ctrl.start()
+
+        var hudStates: [HUDState] = []
+        let exp = expectation(description: "recording state emitted")
+        let collector = Task {
+            for await state in ctrl.hudStates {
+                hudStates.append(state)
+                if state == .recording { exp.fulfill() }
+            }
+        }
+
+        hotkeys.emit(.toggle)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        txr.emitPartial("hello")
+        await fulfillment(of: [exp], timeout: 2)
+        collector.cancel()
+
+        XCTAssertTrue(hudStates.contains(.recording))
+        XCTAssertFalse(hudStates.contains(.streaming), "should not stream when append fails")
+    }
+
+    func testPartialWithSuccessfulAppendEmitsStreaming() async throws {
+        let output = MockOutputManager()
+        let hotkeys = MockHotkeyManager()
+        let pipeline = MockAudioPipeline()
+        let txr = MockTranscriber(makeTranscriptionResult(text: "hello"))
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
+        await ctrl.start()
+
+        var hudStates: [HUDState] = []
+        let exp = expectation(description: "streaming state emitted")
+        let collector = Task {
+            for await state in ctrl.hudStates {
+                hudStates.append(state)
+                if state == .streaming { exp.fulfill() }
+            }
+        }
+
+        hotkeys.emit(.toggle)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        txr.emitPartial("hello")
+        await fulfillment(of: [exp], timeout: 2)
+        collector.cancel()
+
+        XCTAssertTrue(hudStates.contains(.streaming))
+    }
+
+    // MARK: ROGER in a phrase injects as text
 
     func testRogerInPhraseInjectsAsTextViaPartials() async throws {
         let output = MockOutputManager()

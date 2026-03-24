@@ -12,6 +12,7 @@ protocol HotkeyManager {
 }
 
 protocol Transcriber {
+    var isModelReady: Bool { get }
     var partialTextStream: AsyncStream<String> { get }
     func transcribePartial(_ snapshot: SpeechCaptureSnapshot) async -> String
     func transcribe(_ segment: SpeechSegment) async -> TranscriptionResult
