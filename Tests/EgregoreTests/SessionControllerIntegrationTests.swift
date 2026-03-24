@@ -101,14 +101,18 @@ final class MockTranscriber: Transcriber, @unchecked Sendable {
 }
 
 final class MockOutputManager: OutputManager, @unchecked Sendable {
+    var isAtPrompt: Bool = true
     private(set) var appended: [String] = []
+    private(set) var replaced: [String] = []
     private(set) var sendCount = 0
     private(set) var clearCount = 0
     var appendResult: OutputResult = .success
+    var replaceResult: OutputResult = .success
     var sendResult: OutputResult = .success
     var clearResult: OutputResult = .success
 
     var onAppend: ((String) -> Void)?
+    var onReplace: ((String) -> Void)?
     var onSend: (() -> Void)?
     var onClear: (() -> Void)?
 
@@ -116,6 +120,12 @@ final class MockOutputManager: OutputManager, @unchecked Sendable {
         appended.append(text)
         onAppend?(text)
         return appendResult
+    }
+
+    func replace(_ newText: String) -> OutputResult {
+        replaced.append(newText)
+        onReplace?(newText)
+        return replaceResult
     }
 
     func send() -> OutputResult {
@@ -129,6 +139,8 @@ final class MockOutputManager: OutputManager, @unchecked Sendable {
         onClear?()
         return clearResult
     }
+
+    func resetKeyboardState() {}
 }
 
 // MARK: - Helpers
@@ -537,6 +549,175 @@ final class SessionControllerIntegrationTests: XCTestCase {
     }
 
     // MARK: ROGER in a phrase injects as text, not command
+
+    // MARK: Keyboard fallback mode
+
+    func testKeyboardModeSkipsRevision() async throws {
+        let output = MockOutputManager()
+        output.isAtPrompt = false
+        let exp = expectation(description: "first partial appended")
+        output.onAppend = { _ in exp.fulfill() }
+
+        let hotkeys = MockHotkeyManager()
+        let pipeline = MockAudioPipeline()
+        let txr = MockTranscriber(makeTranscriptionResult(text: "git stash"))
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
+        await ctrl.start()
+
+        hotkeys.emit(.toggle)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        txr.emitPartial("git status")
+        await fulfillment(of: [exp], timeout: 2)
+
+        // Emit word-level revision — "status" → "stash"
+        txr.emitPartial("git stash")
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(output.appended, ["git status"])
+        XCTAssertEqual(output.replaced, [], "keyboard mode should never replace during streaming")
+    }
+
+    func testKeyboardModeFinalCorrectionOnDispatch() async throws {
+        let output = MockOutputManager()
+        output.isAtPrompt = false
+        let appendExp = expectation(description: "partial appended")
+        output.onAppend = { _ in appendExp.fulfill() }
+
+        let hotkeys = MockHotkeyManager()
+        let pipeline = MockAudioPipeline()
+        let txr = MockTranscriber(makeTranscriptionResult(text: "git stash"))
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
+        await ctrl.start()
+
+        hotkeys.emit(.toggle)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        txr.emitPartial("git status")
+        await fulfillment(of: [appendExp], timeout: 2)
+
+        // Final transcription differs from what partials placed
+        let replaceExp = expectation(description: "final replace")
+        output.onReplace = { _ in replaceExp.fulfill() }
+        await pipeline.emitSegment(makeSpeechSegment(
+            silenceBefore: .milliseconds(2000),
+            trailingSilenceAfter: .milliseconds(900),
+            endedBySilence: true
+        ))
+        await fulfillment(of: [replaceExp], timeout: 2)
+        XCTAssertEqual(output.replaced, ["git stash"])
+    }
+
+    func testKeyboardModeNoFinalCorrectionWhenMatching() async throws {
+        let output = MockOutputManager()
+        output.isAtPrompt = false
+        let appendExp = expectation(description: "partial appended")
+        output.onAppend = { _ in appendExp.fulfill() }
+
+        let hotkeys = MockHotkeyManager()
+        let pipeline = MockAudioPipeline()
+        let txr = MockTranscriber(makeTranscriptionResult(text: "git status"))
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
+        await ctrl.start()
+
+        hotkeys.emit(.toggle)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        txr.emitPartial("git status")
+        await fulfillment(of: [appendExp], timeout: 2)
+
+        // Final transcription matches what partials placed
+        let noReplace = expectation(description: "no replace")
+        noReplace.isInverted = true
+        output.onReplace = { _ in noReplace.fulfill() }
+        await pipeline.emitSegment(makeSpeechSegment(
+            silenceBefore: .milliseconds(2000),
+            trailingSilenceAfter: .milliseconds(900),
+            endedBySilence: true
+        ))
+        await fulfillment(of: [noReplace], timeout: 0.5)
+        XCTAssertEqual(output.replaced, [])
+    }
+
+    func testNoDoubleSpacingOnPunctuationDelta() async throws {
+        let output = MockOutputManager()
+        output.isAtPrompt = false
+        var appendCount = 0
+        let exp = expectation(description: "second append")
+        output.onAppend = { _ in
+            appendCount += 1
+            if appendCount == 2 { exp.fulfill() }
+        }
+
+        let hotkeys = MockHotkeyManager()
+        let pipeline = MockAudioPipeline()
+        let txr = MockTranscriber(makeTranscriptionResult(text: "Hello world, my friend"))
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
+        await ctrl.start()
+
+        hotkeys.emit(.toggle)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        // Normalizer strips trailing comma: "Hello world," → "Hello world"
+        txr.emitPartial("Hello world,")
+        try await Task.sleep(nanoseconds: 30_000_000)
+        // Next partial extends with mid-sentence punctuation
+        txr.emitPartial("Hello world, my friend")
+
+        await fulfillment(of: [exp], timeout: 2)
+        // Delta should be ", my friend" — no extra space before the comma
+        XCTAssertEqual(output.appended, ["Hello world", ", my friend"])
+    }
+
+    // MARK: FIFO mode
+
+    func testFifoModeReplacesOnRevision() async throws {
+        let output = MockOutputManager()
+        output.isAtPrompt = true
+        let exp = expectation(description: "replace called")
+        output.onReplace = { _ in exp.fulfill() }
+
+        let hotkeys = MockHotkeyManager()
+        let pipeline = MockAudioPipeline()
+        let txr = MockTranscriber(makeTranscriptionResult(text: "git stash"))
+        let ctrl = SessionController(
+            hotkeys: hotkeys,
+            pipeline: pipeline,
+            transcriber: txr,
+            resolver: EgregoreIntentResolver(),
+            output: output
+        )
+        await ctrl.start()
+
+        hotkeys.emit(.toggle)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        txr.emitPartial("git status")
+        try await Task.sleep(nanoseconds: 30_000_000)
+        txr.emitPartial("git stash")
+
+        await fulfillment(of: [exp], timeout: 2)
+        XCTAssertEqual(output.replaced, ["git stash"])
+    }
 
     func testRogerInPhraseInjectsAsTextViaPartials() async throws {
         let output = MockOutputManager()

@@ -116,16 +116,28 @@ actor SessionController {
             }
             let previous = lastInjectedPartial
             var result: OutputResult = .success
-            if normalized.hasPrefix(previous), !previous.isEmpty {
-                let delta = String(normalized.dropFirst(previous.count))
-                if !delta.isEmpty {
-                    result = output.append(delta)
+            if output.isAtPrompt {
+                if normalized.hasPrefix(previous), !previous.isEmpty {
+                    let delta = String(normalized.dropFirst(previous.count))
+                    if !delta.isEmpty {
+                        result = output.append(delta)
+                    }
+                } else if previous.isEmpty {
+                    result = output.append(normalized)
+                } else {
+                    result = output.replace(normalized)
                 }
             } else {
-                if !previous.isEmpty {
-                    _ = output.clear()
+                if normalized.hasPrefix(previous), !previous.isEmpty {
+                    let delta = String(normalized.dropFirst(previous.count))
+                    if !delta.isEmpty {
+                        result = output.append(delta)
+                    }
+                } else if previous.isEmpty {
+                    result = output.append(normalized)
+                } else {
+                    continue
                 }
-                result = output.append(normalized)
             }
             if case let .failure(message) = result {
                 log.error("partial append failed: \(message)", category: .session)
@@ -172,7 +184,12 @@ actor SessionController {
                 hudContinuation.yield(continueListening ? .listening : .idle)
                 return
             }
-            log.log("dispatch: inject chars=\(normalized.count) (partials already placed text)", category: .session)
+            if lastInjectedPartial != normalized {
+                log.log("dispatch: inject correction \(lastInjectedPartial.count) → \(normalized.count) chars", category: .session)
+                _ = output.replace(normalized)
+            } else {
+                log.log("dispatch: inject chars=\(normalized.count) (partials already placed text)", category: .session)
+            }
             hudContinuation.yield(.injected(continueListening: continueListening))
 
         case .command(.roger):
@@ -210,14 +227,15 @@ actor SessionController {
         lastLiveTranscript = nil
         lastInjectedPartial = ""
         pendingSnapshot = nil
+        output.resetKeyboardState()
     }
 
     private func stopCurrentUtterance() {
         acceptsPartialUpdates = false
-        lastInjectedPartial = ""
         pendingSnapshot = nil
         partialTask?.cancel()
         partialTask = nil
+        output.resetKeyboardState()
     }
 
     private func ensurePartialWorker() {

@@ -22,7 +22,10 @@ protocol IntentResolver {
 }
 
 protocol OutputManager {
+    var isAtPrompt: Bool { get }
     func append(_ text: String) -> OutputResult
+    func replace(_ newText: String) -> OutputResult
     func send() -> OutputResult
     func clear() -> OutputResult
+    func resetKeyboardState()
 }

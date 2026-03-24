@@ -57,6 +57,11 @@ final class ShellOutputManager: OutputManager {
         let name: String
     }
 
+    var isAtPrompt: Bool {
+        guard let target = sessionResolver() else { return false }
+        return target.metadata?.effectivePrompt ?? false
+    }
+
     func append(_ text: String) -> OutputResult {
         guard let target = sessionResolver() else {
             log.error("append failed: no registered shell session found", category: .output)
@@ -65,11 +70,26 @@ final class ShellOutputManager: OutputManager {
         if let metadata = target.metadata, metadata.effectivePrompt {
             return writeToPipe(action: "inject", text: text, target: target)
         }
-        log.log("append: not confirmed at prompt, posting keyboard events text=<<<\(text)>>>", category: .output)
-        let needsSeparator = hasInjectedSinceLastSend && !text.hasPrefix(" ")
-        let prefix = needsSeparator ? " " : ""
         hasInjectedSinceLastSend = true
-        return Self.postKeyEvents(text: prefix + text, logger: log)
+        log.log("append: not confirmed at prompt, pasting via clipboard text=<<<\(text)>>>", category: .output)
+        saveClipboardIfNeeded()
+        return pasteViaClipboard(text)
+    }
+
+    func replace(_ newText: String) -> OutputResult {
+        guard let target = sessionResolver() else {
+            log.error("replace failed: no registered shell session found", category: .output)
+            return .failure("No active terminal target")
+        }
+        if let metadata = target.metadata, metadata.effectivePrompt {
+            let r1 = writeToPipe(action: "clear", text: "", target: target)
+            if case .failure = r1 { return r1 }
+            return writeToPipe(action: "inject", text: newText, target: target)
+        }
+        log.log("replace: clearing line + pasting via clipboard (\(newText.count) chars)", category: .output)
+        saveClipboardIfNeeded()
+        hasInjectedSinceLastSend = !newText.isEmpty
+        return clearLineThenPaste(newText)
     }
 
     func clear() -> OutputResult {
@@ -82,7 +102,8 @@ final class ShellOutputManager: OutputManager {
         }
         log.log("clear: not confirmed at prompt, posting Ctrl+U", category: .output)
         hasInjectedSinceLastSend = false
-        return Self.postControlKey(0x20, logger: log)
+        scheduleClipboardRestore()
+        return postKeyOnQueue(0x20, flags: .maskControl, label: "clear")
     }
 
     func send() -> OutputResult {
@@ -95,7 +116,13 @@ final class ShellOutputManager: OutputManager {
         }
         log.log("send: not confirmed at prompt, posting Return key", category: .output)
         hasInjectedSinceLastSend = false
-        return Self.postReturnKey(logger: log)
+        scheduleClipboardRestore()
+        return postKeyOnQueue(0x24, label: "send")
+    }
+
+    func resetKeyboardState() {
+        hasInjectedSinceLastSend = false
+        scheduleClipboardRestore()
     }
 
     // MARK: Private
@@ -154,64 +181,103 @@ final class ShellOutputManager: OutputManager {
         }
     }
 
-    private static let interKeyDelay: UInt32 = 2000
+    private static let pasteSettleDelay: UInt32 = 20_000
 
     private let sessionResolver: () -> SessionTarget?
     private let log: RuntimeLogger
+    private let keyboardQueue = DispatchQueue(label: "egregore.keyboard", qos: .userInteractive)
     private var hasInjectedSinceLastSend = false
+    private var savedClipboard: String?
 
-    private static func postKeyEvents(text: String, logger: RuntimeLogger) -> OutputResult {
-        let chars = Array(text)
-        let delay = interKeyDelay
-        DispatchQueue.global(qos: .userInteractive).async {
+    private func saveClipboardIfNeeded() {
+        if savedClipboard == nil {
+            savedClipboard = NSPasteboard.general.string(forType: .string)
+        }
+    }
+
+    private func scheduleClipboardRestore() {
+        guard let saved = savedClipboard else { return }
+        savedClipboard = nil
+        let logger = log
+        keyboardQueue.async {
+            usleep(100_000)
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(saved, forType: .string)
+            logger.log("restored clipboard after keyboard fallback", category: .output)
+        }
+    }
+
+    private func pasteViaClipboard(_ text: String) -> OutputResult {
+        let logger = log
+        keyboardQueue.async {
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(text, forType: .string)
             let source = CGEventSource(stateID: .hidSystemState)
-            for (i, char) in chars.enumerated() {
-                var utf16 = Array(String(char).utf16)
-                guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
-                      let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
-                else {
-                    logger.error("postKeyEvents: failed to create CGEvent at char \(i)", category: .output)
-                    return
-                }
-                keyDown.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
-                keyDown.post(tap: .cgSessionEventTap)
-                keyUp.post(tap: .cgSessionEventTap)
-                if i < chars.count - 1 {
-                    usleep(delay)
-                }
+            guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true),
+                  let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
+            else {
+                logger.error("pasteViaClipboard: failed to create Cmd+V event", category: .output)
+                return
             }
-            logger.log("postKeyEvents: posted \(chars.count) characters", category: .output)
+            keyDown.flags = .maskCommand
+            keyUp.flags = .maskCommand
+            keyDown.post(tap: .cgSessionEventTap)
+            keyUp.post(tap: .cgSessionEventTap)
+            usleep(Self.pasteSettleDelay)
+            logger.log("pasteViaClipboard: pasted \(text.count) chars", category: .output)
         }
         return .success
     }
 
-    private static func postReturnKey(logger: RuntimeLogger) -> OutputResult {
-        let source = CGEventSource(stateID: .hidSystemState)
-        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x24, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x24, keyDown: false)
-        else {
-            logger.error("postReturnKey: failed to create CGEvent", category: .output)
-            return .failure("Failed to simulate Return key")
+    private func clearLineThenPaste(_ text: String) -> OutputResult {
+        let logger = log
+        keyboardQueue.async {
+            let source = CGEventSource(stateID: .hidSystemState)
+            if let kd = CGEvent(keyboardEventSource: source, virtualKey: 0x20, keyDown: true),
+               let ku = CGEvent(keyboardEventSource: source, virtualKey: 0x20, keyDown: false) {
+                kd.flags = .maskControl
+                ku.flags = .maskControl
+                kd.post(tap: .cgSessionEventTap)
+                ku.post(tap: .cgSessionEventTap)
+            }
+            usleep(10_000)
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(text, forType: .string)
+            guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true),
+                  let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
+            else {
+                logger.error("clearLineThenPaste: failed to create Cmd+V event", category: .output)
+                return
+            }
+            keyDown.flags = .maskCommand
+            keyUp.flags = .maskCommand
+            keyDown.post(tap: .cgSessionEventTap)
+            keyUp.post(tap: .cgSessionEventTap)
+            usleep(Self.pasteSettleDelay)
+            logger.log("clearLineThenPaste: cleared line + pasted \(text.count) chars", category: .output)
         }
-        keyDown.post(tap: .cgSessionEventTap)
-        keyUp.post(tap: .cgSessionEventTap)
-        logger.log("postReturnKey: posted Return", category: .output)
         return .success
     }
 
-    private static func postControlKey(_ virtualKey: CGKeyCode, logger: RuntimeLogger) -> OutputResult {
-        let source = CGEventSource(stateID: .hidSystemState)
-        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: false)
-        else {
-            logger.error("postControlKey: failed to create CGEvent for key \(virtualKey)", category: .output)
-            return .failure("Failed to simulate control key")
+    private func postKeyOnQueue(_ virtualKey: CGKeyCode, flags: CGEventFlags = [], label: String) -> OutputResult {
+        let logger = log
+        keyboardQueue.async {
+            let source = CGEventSource(stateID: .hidSystemState)
+            guard let kd = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: true),
+                  let ku = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: false)
+            else {
+                logger.error("\(label): failed to create CGEvent for key \(virtualKey)", category: .output)
+                return
+            }
+            kd.flags = flags
+            ku.flags = flags
+            kd.post(tap: .cgSessionEventTap)
+            ku.post(tap: .cgSessionEventTap)
+            logger.log("\(label): posted key \(virtualKey)", category: .output)
         }
-        keyDown.flags = .maskControl
-        keyDown.post(tap: .cgSessionEventTap)
-        keyUp.flags = .maskControl
-        keyUp.post(tap: .cgSessionEventTap)
-        logger.log("postControlKey: posted Ctrl+key(\(virtualKey))", category: .output)
         return .success
     }
 
