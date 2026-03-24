@@ -66,7 +66,8 @@ final class ShellOutputManager: OutputManager {
             return writeToPipe(action: "inject", text: text, target: target)
         }
         log.log("append: not confirmed at prompt, posting keyboard events text=<<<\(text)>>>", category: .output)
-        let prefix = hasInjectedSinceLastSend ? " " : ""
+        let needsSeparator = hasInjectedSinceLastSend && !text.hasPrefix(" ")
+        let prefix = needsSeparator ? " " : ""
         hasInjectedSinceLastSend = true
         return Self.postKeyEvents(text: prefix + text, logger: log)
     }
